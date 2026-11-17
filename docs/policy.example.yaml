@@ -1,0 +1,34 @@
+version: 1
+vm:
+  profile: desktop        # headless | desktop
+  cpus: 4
+  memory: 8GiB
+  disk: 40GiB
+  timeout: 8h             # 0 = unlimited
+ssh:
+  root: true              # root shell via `glasshouse ssh`; the VM is the boundary
+files:
+  mode: copy              # copy | none
+  export: review          # review | auto | deny
+  deny_patterns: [".env*", "*.pem", "id_*", ".git/config"]
+  max_import: 500MiB
+network:
+  mode: allowlist         # allowlist | offline | host   (host = the guest uses the host network directly; see README)
+  allow:
+    - archive.ubuntu.com:80
+    - security.ubuntu.com:80
+    - github.com:443
+    - pypi.org:443
+    - files.pythonhosted.org:443
+    - registry.npmjs.org:443
+    - claude.ai:443              # Claude Code subscription login
+    - platform.claude.com:443    # (OAuth authorize / token)
+    - api.anthropic.com:443
+  max_egress: 2GiB        # 0 = unlimited
+clipboard: off            # off | host-to-guest (not wired up yet)
+monitor:
+  cc_monitor: true        # CC-Monitor guard inside the guest
+credentials:
+  llm_gateway:
+    provider: anthropic
+    key_ref: keychain:glasshouse-anthropic   # optional. Leave it out to log in to Claude Code with a subscription account inside the guest

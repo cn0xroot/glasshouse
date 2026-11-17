@@ -1,0 +1,139 @@
+{
+  "version": 4,
+  "lines": [
+    [
+      {
+        "id": "1",
+        "type": "model",
+        "color": "cyan"
+      },
+      {
+        "id": "2",
+        "type": "separator"
+      },
+      {
+        "id": "3",
+        "type": "context-length",
+        "color": "brightBlack"
+      },
+      {
+        "id": "4",
+        "type": "separator"
+      },
+      {
+        "id": "5",
+        "type": "git-branch",
+        "color": "magenta"
+      },
+      {
+        "id": "6",
+        "type": "separator"
+      },
+      {
+        "id": "7",
+        "type": "git-changes",
+        "color": "yellow"
+      }
+    ],
+    [
+      {
+        "id": "e3114dfd-395e-49ba-85bd-f298af0b03dd",
+        "type": "tokens-input"
+      },
+      {
+        "id": "67ac0a69-0c83-4872-a4f0-a02cbb8ec6d2",
+        "type": "tokens-output"
+      },
+      {
+        "id": "11e2c2e8-d0fb-419b-8de1-c21bed32c62f",
+        "type": "tokens-total"
+      },
+      {
+        "id": "2df565d5-23ab-41c4-b689-6d5e35d0d794",
+        "type": "tokens-cached"
+      }
+    ],
+    [
+      {
+        "id": "47002a85-b9b1-4f9e-b2c3-ed3568c9e390",
+        "type": "claude-account-email"
+      },
+      {
+        "id": "16adbedf-d748-4a0f-9f69-61131f995dfe",
+        "type": "session-cost"
+      },
+      {
+        "id": "ce27dba9-2cce-4b3a-83bd-36e6226897ed",
+        "type": "session-name"
+      }
+    ],
+    [
+      {
+        "id": "0003240c-3397-4fab-870e-90d15d49bcea",
+        "type": "session-usage"
+      },
+      {
+        "id": "3011e67b-9759-4b7b-a5cb-0cae8c01d632",
+        "type": "weekly-opus-usage"
+      },
+      {
+        "id": "176a1683-aec9-4faf-bab4-d60e34a39a4d",
+        "type": "weekly-sonnet-usage"
+      },
+      {
+        "id": "6360035b-631a-4de0-afe9-038b413e0428",
+        "type": "weekly-usage"
+      },
+      {
+        "id": "7a7e5afe-37cc-43a5-b8db-75923e7e3bc2",
+        "type": "reset-timer"
+      },
+      {
+        "id": "3b186199-ee72-404d-b4e1-8158c6d60bd7",
+        "type": "extra-usage-remaining"
+      }
+    ],
+    [
+      {
+        "id": "e63f6d43-c6d6-431c-ba5a-9744d399ce64",
+        "type": "thinking-effort"
+      },
+      {
+        "id": "34c9b8bc-b5e5-4991-8425-f08941290717",
+        "type": "jj-workspace"
+      },
+      {
+        "id": "7cd33930-98d2-4a2c-9492-b403abc06ee1",
+        "type": "input-speed"
+      },
+      {
+        "id": "3f23c663-3587-4d5d-9e28-eb5431963bbc",
+        "type": "output-speed"
+      },
+      {
+        "id": "7cefe6b3-7667-419c-b62d-7f7abf111da0",
+        "type": "total-speed"
+      }
+    ]
+  ],
+  "flexMode": "full-minus-40",
+  "compactThreshold": 60,
+  "colorLevel": 2,
+  "inheritSeparatorColors": false,
+  "globalBold": false,
+  "gitCacheTtlSeconds": 5,
+  "minimalistMode": false,
+  "powerline": {
+    "enabled": false,
+    "separators": [
+      ""
+    ],
+    "separatorInvertBackground": [
+      false
+    ],
+    "startCaps": [],
+    "endCaps": [],
+    "autoAlign": false,
+    "continueThemeAcrossLines": false
+  }
+}
