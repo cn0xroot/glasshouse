@@ -117,12 +117,12 @@ cd /workspace
 claude            # 首次运行会给出登录链接，用你的订阅账号在浏览器里授权
 ```
 
-- 订阅登录**未验证**：需要你在浏览器里完成授权，我没有做过。
+- 订阅登录已验证：README 里的截图显示 Claude Code 2.1.326 在虚拟机里用 Claude Pro 账号登录运行（由项目所有者在浏览器里授权，`network.mode: host`）。
 - 登录凭证存在虚拟机里（`~/.claude/.credentials.json`）。保留磁盘的会话里它会一直在；虚拟机被攻破时它可能被读走，这是订阅登录模式的已知风险。
 - 默认网络策略允许 `claude.ai`、`platform.claude.com`、`api.anthropic.com`。
 - 虚拟机里自动更新是关闭的，要新版 Claude Code 就重建镜像。
 - ccstatusline 的账号、用量那几项登录后才有内容，没登录时显示 `[No credentials]`（已验证）。
-- CC-Monitor 的 hook 在镜像里（`/etc/claude-code/managed-settings.json`，root 属主，agent 改不了）。**Claude Code 实际执行这些 hook 要登录后才能验证，还没验证。** 界面：`glasshouse monitor`。
+- CC-Monitor 的 hook 在镜像里（`/etc/claude-code/managed-settings.json`，root 属主，agent 改不了）。Claude Code 确实在执行它们：README 第二张截图里 CC-Monitor 显示该 Claude Code 会话已被监控，有 5 条审计事件（当时是 Permissive 模式，只记录、不拦截）。Enforcing 模式下对真实 Claude Code 的拦截没试过，只试过 hook 脚本本身（`rm -rf /` 被拦截，`ls` 放行）。界面：`glasshouse monitor`，或桌面虚拟机里的浏览器打开 `127.0.0.1:9999`。
 
 ## 6. 取回成果
 
@@ -205,7 +205,7 @@ network:
 | `offline` | 没有出站网络 |
 | `host` | 虚拟机直接用宿主机的网络。白名单、私网封锁、流量上限**都不再生效**，虚拟机能访问宿主机能访问的一切，包括局域网和 `10.0.2.2`（宿主机环回）。是显式策略项，项目策略不能开启，启动时有警告并写审计 |
 
-这台机器用 `host`，原因是 Clash 的 fake-ip DNS 返回 `198.18.0.x`，`allowlist` 模式会把它当成非公网地址拒绝。`host` 模式的真实联网（能否连通 `claude.ai`）还没在真实虚拟机里验证。
+这台机器用 `host`，原因是 Clash 的 fake-ip DNS 返回 `198.18.0.x`，`allowlist` 模式会把它当成非公网地址拒绝。`host` 模式的真实联网已验证：在虚拟机里完成了订阅登录并拿到了模型回复（见 README 截图）。
 
 ### 7.4 其他常用项
 
@@ -277,4 +277,4 @@ glasshouse logs --console       # 虚拟机串口控制台，启动失败先看�
 - `allowlist` 模式下 guest 只能走 HTTP(S)，裸 SSH 到 GitHub 不通，git 用 HTTPS。
 - 磁盘不能给已有会话扩容，CPU 和内存也不能给已有会话修改。
 - `monthly_budget` 只解析不执行。
-- 未验证：订阅登录、`host` 模式下的真实联网、桌面窗口画面、Claude Code 实际执行 hook、arm64、macOS。
+- 未验证：CC-Monitor Enforcing 模式下对真实 Claude Code 的拦截、模型网关（API Key 模式）、arm64、macOS。

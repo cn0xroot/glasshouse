@@ -117,12 +117,12 @@ cd /workspace
 claude            # the first run prints a login link; authorize it in your browser with your subscription account
 ```
 
-- Subscription login is **not verified**: it needs you to authorize in a browser, which I have not done.
+- Subscription login is verified: the screenshots in the README show Claude Code 2.1.326 running in the VM on a Claude Pro login (authorized in a browser by the project owner, with `network.mode: host`).
 - The credentials are stored in the VM (`~/.claude/.credentials.json`). In a session with a kept disk they stay; if the VM is compromised they can be read, which is a known risk of subscription login.
 - The default network policy allows `claude.ai`, `platform.claude.com` and `api.anthropic.com`.
 - Auto-update is off inside the VM; rebuild the image to get a newer Claude Code.
 - The account and usage items of ccstatusline have content only after login; before that they show `[No credentials]` (verified).
-- The CC-Monitor hooks are in the image (`/etc/claude-code/managed-settings.json`, owned by root, not editable by agent). **That Claude Code really runs these hooks can only be checked after login and has not been verified.** Its UI: `glasshouse monitor`.
+- The CC-Monitor hooks are in the image (`/etc/claude-code/managed-settings.json`, owned by root, not editable by agent). Claude Code does run them: in the second README screenshot CC-Monitor shows the Claude Code session as monitored, with 5 audit events (the mode was Permissive, which only logs and never blocks). Blocking in Enforcing mode has not been tried with the real Claude Code; only the hook script itself was (`rm -rf /` was blocked, `ls` allowed). Its UI: `glasshouse monitor`, or the browser inside the desktop VM at `127.0.0.1:9999`.
 
 ## 6. Bring the results back
 
@@ -205,7 +205,7 @@ network:
 | `offline` | no outbound network |
 | `host` | the VM uses the host's network directly. The allowlist, the private-address blocking and the egress cap **no longer apply**; the VM can reach anything the host can, including the LAN and `10.0.2.2` (host loopback). It is an explicit policy item, a project policy cannot turn it on, and a warning is printed and an audit record written at start |
 
-This machine uses `host` because Clash's fake-ip DNS returns `198.18.0.x`, which `allowlist` mode refuses as a non-public address. Real connectivity in `host` mode (whether `claude.ai` is reachable) has not been verified in a real VM yet.
+This machine uses `host` because Clash's fake-ip DNS returns `198.18.0.x`, which `allowlist` mode refuses as a non-public address. Real connectivity in `host` mode is verified: the subscription login and a model reply worked from inside the VM (see the README screenshots).
 
 ### 7.4 Other common settings
 
@@ -277,4 +277,4 @@ The audit log is on the host and every record carries the hash of the previous o
 - Under `allowlist` the guest can only use HTTP(S); bare SSH to GitHub does not work, use HTTPS for git.
 - The disk cannot be grown, and CPU and memory cannot be changed, for an existing session.
 - `monthly_budget` is only parsed, not enforced.
-- Not verified: subscription login, real connectivity in `host` mode, the desktop window picture, Claude Code actually running the hooks, arm64, macOS.
+- Not verified: blocking in CC-Monitor's Enforcing mode with the real Claude Code, the model gateway (API-key mode), arm64, macOS.

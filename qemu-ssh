@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# One command into a root shell in the Glasshouse VM.
+#
+#   ./qemu-ssh                    root shell in the saved desktop session (see ./start.sh), or in the only running one
+#   ./qemu-ssh s-abc123           a given session
+#   ./qemu-ssh --user agent       the unprivileged user instead of root
+#   ./qemu-ssh --start            boot the session first if it is stopped (no desktop window is opened)
+#   ./qemu-ssh -- ls /workspace   run one command instead of a shell
+#
+# Root inside the VM is not a security boundary, the VM is. A policy with `ssh.root: false` refuses root: use --user agent.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GH="${GLASSHOUSE_BIN:-$HERE/bin/glasshouse}"
+DATA="${GLASSHOUSE_HOME:-$HOME/.local/share/glasshouse}"
+
+die() { echo "qemu-ssh: $*" >&2; exit 1; }
+
+user=root; start=0; session=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --user)  [ $# -ge 2 ] || die "--user needs root or agent"; user="$2"; shift 2 ;;
+    --start) start=1; shift ;;
+    -h|--help) sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --) shift; break ;;
+    s-*) session="$1"; shift ;;
+    *) die "unknown argument '$1' (see --help)" ;;
+  esac
+done
+case "$user" in root|agent) ;; *) die "--user must be root or agent" ;; esac
+
+if [ ! -x "$GH" ]; then
+  [ "$GH" = "$HERE/bin/glasshouse" ] || die "$GH is missing"
+  echo "==> building glasshouse" >&2
+  make -C "$HERE" build >/dev/null
+fi
+
+# which session: the argument, else the one ./start.sh saved, else glasshouse picks the only running one
+if [ -z "$session" ] && [ -s "$DATA/desktop-session" ]; then session="$(tr -d '[:space:]' < "$DATA/desktop-session")"; fi
+state=""
+if [ -n "$session" ]; then
+  state="$("$GH" ls 2>/dev/null | awk -v id="$session" '$1 == id { print $2; exit }')"
+  [ -n "$state" ] || die "session $session does not exist (glasshouse ls)"
+fi
+
+if [ -n "$session" ] && [ "$state" != ready ]; then
+  case "$state" in
+    stopped|failed|dead)
+      [ "$start" = 1 ] || die "session $session is $state; boot it with ./start.sh, or run: ./qemu-ssh --start $session" ;;
+    *) die "session $session is $state; wait a moment" ;;
+  esac
+  echo "==> booting session $session (data kept)" >&2
+  "$GH" start "$session" -- true >&2 || die "could not start session $session"
+fi
+
+args=(ssh --user "$user")
+[ -n "$session" ] && args+=("$session")
+[ $# -gt 0 ] && args+=(-- "$@")
+exec "$GH" "${args[@]}"

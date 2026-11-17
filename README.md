@@ -2,7 +2,7 @@
 
 English | [简体中文](./README.zh-CN.md)
 
-Run AI agents inside a hardware-virtualized Ubuntu 26.04 LTS virtual machine, so they cannot reach your host's files, credentials or internal network. QEMU/KVM on Linux, Virtualization.framework on macOS. The design document is `设计文档与技术方案.md` (Chinese; a local file, listed in `.gitignore`, not part of the repository).
+Run AI agents inside a hardware-virtualized Ubuntu 26.04 LTS virtual machine, so they cannot reach your host's files, credentials or internal network. QEMU/KVM on Linux, Virtualization.framework on macOS.
 
 Full usage manual: [`USAGE.md`](./USAGE.md) (English) · [`USAGE.zh-CN.md`](./USAGE.zh-CN.md) (中文): starting, changing the configuration, adding CPU and memory, persistence, troubleshooting.
 
@@ -19,9 +19,24 @@ Vibe coding means handing the keyboard to an AI agent and letting it run command
 
 Typical loop: `glasshouse run --shell ./proj` → run `claude` and describe what you want → `glasshouse pull` to review and bring the result home.
 
+## Demo
+
+![A root shell from `glasshouse ssh` next to the GNOME desktop of the same VM in a QEMU window](docs/images/demo-desktop.png)
+
+*`glasshouse ssh` gives a root shell in the Ubuntu 26.04.1 VM (left); the same VM's GNOME desktop runs in a QEMU window (right).*
+
+![Claude Code running in the VM with the CC-Monitor web UI open in the VM's browser](docs/images/demo-claude-code-cc-monitor.png)
+
+*Claude Code 2.1.326 runs inside the VM on a Claude Pro subscription login (as the `agent` user, in `/home/agent`). The VM's browser shows the CC-Monitor web UI at `127.0.0.1:9999`: the Claude Code session is monitored and its events appear in the audit log. The mode is Permissive, which only logs.*
+
+![The CC-Monitor web UI opened on the host with glasshouse monitor, next to the VM desktop running Claude Code](docs/images/demo-monitor.png)
+
+*`glasshouse monitor` opens the CC-Monitor UI of the VM in the host's browser, through an SSH tunnel and a token-protected local proxy (the token in the printed URL is hidden in this picture). It shows the Claude Pro plan and quota, and the audit events of the Claude Code session running in the VM desktop (right). The account name, email and IDs are masked by CC-Monitor's "sensitive info" switch.*
+
 ## Contents
 
 - [Glasshouse AI SandBox for Vibe-coding](#glasshouse-ai-sandbox-for-vibe-coding)
+- [Demo](#demo)
 - [Features](#features)
 - [Status (read first)](#status-read-first)
 - [How isolation works](#how-isolation-works)
@@ -33,7 +48,6 @@ Typical loop: `glasshouse run --shell ./proj` → run `claude` and describe what
 - [Command reference](#command-reference)
 - [CC-Monitor integration](#cc-monitor-integration)
 - [Project layout](#project-layout)
-- [Differences from the design document](#differences-from-the-design-document)
 - [First real-machine checklist](#first-real-machine-checklist)
 - [Troubleshooting](#troubleshooting)
 
@@ -59,7 +73,7 @@ Typical loop: `glasshouse run --shell ./proj` → run `claude` and describe what
 | QEMU backend, cloud-init, CLI | Implemented. **Booted for real on Linux/KVM (amd64)** with both `headless` and `desktop` (GNOME) images: SSH, file import, offline mode, `pull` review, audit chain and CC-Monitor were checked. Not yet checked: `glasshouse gui`, an LLM round trip, the tamper test on `audit.jsonl`, and anything on arm64 |
 | `image/build.sh` | Runs end to end on Ubuntu (both profiles); see the notes under "Build an image" |
 | macOS backend (`vz-helper/`, Swift) | **Never compiled** (no Mac/Swift toolchain); a reviewed starting point only |
-| CC-Monitor integration | Install and start steps checked against the upstream repo; **not yet verified on a real machine** |
+| CC-Monitor integration | Hooks are baked into the image. Verified on a real machine: the service runs and its web UI shows the monitored Claude Code session with its audit events (see Demo). The upstream code has not been reviewed line by line |
 
 On a real machine, go in this order: `glasshouse doctor` → build an image → `glasshouse run`. When something deviates, look at `glasshouse logs --console` first.
 
@@ -484,18 +498,6 @@ image/build.sh       image build script
 vz-helper/           Swift helper for macOS
 docs/                policy example; PROGRESS.md (development progress) and CHANGELOG.md (code change log) are local notes listed in .gitignore
 ```
-
-## Differences from the design document
-
-To avoid depending on root and third-party libraries, the implementation changed these things; the matching sections of the design document can be updated accordingly:
-
-1. gvisor-tap-vsock is not used; everything is standard library. On Linux, QEMU's `restrict=on` user-mode networking plus `guestfwd` replaces a custom network stack. As a result, non-HTTP(S) outbound traffic from the guest (for example raw SSH to GitHub) is **not supported** for now; use HTTPS for git.
-2. On Linux, SSH uses `hostfwd=127.0.0.1:<random port>`, not vsock (vsock needs `/dev/vhost-vsock` permissions). macOS uses vsock plus a host unix socket.
-3. There is no separate `glasshoused` daemon: each session has its own supervisor process (`glasshouse _supervise`), and the CLI talks to it through the session directory and `audit.sock`.
-4. There is no `guestd`: command execution and file transfer use ssh directly.
-5. `policy.yaml` uses the built-in YAML subset parser (nested maps, scalar lists, inline lists, comments).
-6. `monthly_budget` is parsed but **not enforced**; the gateway only has a per-session request-count hook.
-7. An executable-bit change on export is flagged in the diff for you to confirm, rather than rejected outright.
 
 ## First real-machine checklist
 

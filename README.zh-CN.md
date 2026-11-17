@@ -2,7 +2,7 @@
 
 [English](./README.md) | 简体中文
 
-在硬件虚拟化的 Ubuntu 26.04 LTS 虚拟机里运行 AI Agent，让它碰不到宿主机的文件、凭证和内网。Linux 用 QEMU/KVM，macOS 用 Virtualization.framework。设计文档见 `设计文档与技术方案.md`（本地文件，已列入 `.gitignore`，不在版本库中）。
+在硬件虚拟化的 Ubuntu 26.04 LTS 虚拟机里运行 AI Agent，让它碰不到宿主机的文件、凭证和内网。Linux 用 QEMU/KVM，macOS 用 Virtualization.framework。
 
 完整使用手册：[`USAGE.zh-CN.md`](./USAGE.zh-CN.md)（中文）· [`USAGE.md`](./USAGE.md)（English），涵盖启动、修改配置、增加 CPU 和内存、数据保留、排错。
 
@@ -19,9 +19,24 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 
 典型流程：`glasshouse run --shell ./proj` → 运行 `claude` 并描述需求 → `glasshouse pull` 审阅并把结果带回本机。
 
+## 演示
+
+![`glasshouse ssh` 的 root shell，旁边是同一台虚拟机在 QEMU 窗口里的 GNOME 桌面](docs/images/demo-desktop.png)
+
+*`glasshouse ssh` 进入 Ubuntu 26.04.1 虚拟机的 root shell（左）；同一台虚拟机的 GNOME 桌面运行在 QEMU 窗口里（右）。*
+
+![Claude Code 在虚拟机里运行，虚拟机的浏览器里打开了 CC-Monitor 界面](docs/images/demo-claude-code-cc-monitor.png)
+
+*Claude Code 2.1.326 在虚拟机里用 Claude Pro 订阅账号登录运行（`agent` 用户，目录 `/home/agent`）。虚拟机里的浏览器打开 `127.0.0.1:9999` 的 CC-Monitor 界面：这个 Claude Code 会话已被监控，事件进入了审计日志。模式是 Permissive（只记录，不拦截）。*
+
+![在宿主机上用 glasshouse monitor 打开的 CC-Monitor 界面，旁边是运行着 Claude Code 的虚拟机桌面](docs/images/demo-monitor.png)
+
+*`glasshouse monitor` 通过 SSH 隧道和带令牌的本地代理，在宿主机的浏览器里打开虚拟机里的 CC-Monitor 界面（图中打印出的 URL 里的令牌已隐藏）。界面显示 Claude Pro 套餐和额度，以及虚拟机桌面（右）里运行的 Claude Code 会话的审计事件。账号名称、邮箱和各种 ID 由 CC-Monitor 的"敏感信息"开关遮盖。*
+
 ## 目录
 
 - [Glasshouse AI SandBox for Vibe-coding](#glasshouse-ai-sandbox-for-vibe-coding)
+- [演示](#演示)
 - [核心功能](#核心功能)
 - [状态（请先读）](#状态请先读)
 - [它怎么隔离](#它怎么隔离)
@@ -33,7 +48,6 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 - [命令参考](#命令参考)
 - [CC-Monitor 集成](#cc-monitor-集成)
 - [项目结构](#项目结构)
-- [与设计文档的差异](#与设计文档的差异)
 - [首次真机验证清单](#首次真机验证清单)
 - [常见问题](#常见问题)
 
@@ -59,7 +73,7 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 | QEMU 后端、cloud-init、CLI | 已实现，**已在 Linux/KVM（amd64）上真实启动过** `headless` 和 `desktop`（GNOME）两种镜像，核对过 SSH、文件导入、离线模式、`pull` 审阅、审计哈希链和 CC-Monitor。尚未核对：`glasshouse gui`、真实的模型调用、手改 `audit.jsonl` 的篡改测试，以及 arm64 |
 | `image/build.sh` | 已在 Ubuntu 上端到端跑通（两种档位）；见下文"构建镜像"里的注意事项 |
 | macOS 后端（`vz-helper/` Swift） | **没有编译过**（没有 Mac/Swift 工具链），只是评审过的起点 |
-| CC-Monitor 集成 | 已按上游仓库对过安装与启动方式；**没有在真机上跑通** |
+| CC-Monitor 集成 | hook 已写进镜像。真机已验证：服务在运行，网页界面显示被监控的 Claude Code 会话和它的审计事件（见演示）。上游代码没有逐行审查 |
 
 首次在真机上请按 `glasshouse doctor` → 构建镜像 → `glasshouse run` 的顺序走，遇到偏差优先看 `glasshouse logs --console`。
 
@@ -484,18 +498,6 @@ image/build.sh       镜像构建脚本
 vz-helper/           macOS 的 Swift 助手
 docs/                策略示例；PROGRESS.md（开发进度）和 CHANGELOG.md（代码修改记录）是本地笔记，已列入 .gitignore
 ```
-
-## 与设计文档的差异
-
-实现时为了不依赖 root 和第三方库，做了这些改动，文档里的相应段落可以据此更新：
-
-1. 没有引入 gvisor-tap-vsock，全部用标准库。Linux 用 QEMU 的 `restrict=on` 用户态网络和 `guestfwd` 代替自写网络栈；因此 guest 里非 HTTP(S) 的出站（比如裸 SSH 到 GitHub）目前**不支持**，git 请用 HTTPS。
-2. Linux 上 SSH 走 `hostfwd=127.0.0.1:随机端口`，不是 vsock（vsock 需要 `/dev/vhost-vsock` 权限）。macOS 走 vsock + 宿主机 unix socket。
-3. 没有单独的 `glasshoused` 守护进程：每个会话一个监督进程（`glasshouse _supervise`），CLI 通过会话目录和 `audit.sock` 与它通信。
-4. 没有 `guestd`：命令执行和文件传输直接用 ssh。
-5. `policy.yaml` 用的是自带的 YAML 子集解析器（嵌套映射、标量列表、行内列表、注释）。
-6. `monthly_budget` 目前只被解析，**不被执行**；网关只有"每会话请求数上限"的钩子。
-7. 导出时可执行位变化会在 diff 里标出让你确认，而不是直接拒绝。
 
 ## 首次真机验证清单
 
