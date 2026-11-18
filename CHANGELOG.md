@@ -4,17 +4,9 @@ English | [简体中文](./CHANGELOG.zh-CN.md)
 
 What changed per version, as a user would notice it. Every item says how far it was checked: **verified** means it was run on a real machine, **not verified** means only the code was written or only unit tests exist. The step-by-step code change log is the local note `docs/CHANGELOG.md` (listed in `.gitignore`, not in the repository).
 
-## V0.2.1 (2026-11-17, tag `V0.2.1`)
-
-On top of `V0.2`; fixes `glasshouse monitor`.
-
-- **Fixed: `glasshouse monitor` timed out when `~/.ssh/config` enables `ControlMaster`.** Every session uses the same host alias `glasshouse` (macOS backend), so ssh reused another session's master and the `monitor.sock` forward never appeared. All ssh calls now carry `-o ControlMaster=no -o ControlPath=none`. (From the Mac-side patch.) On Linux, `ssh -G` showed that the command-line options override `ControlMaster auto` in the config file; a real master collision was not reproduced because Linux sessions have different ports.
-- **macOS:** the tunnel's ssh prints a harmless `setsockopt TCP_NODELAY` error for every forwarded connection; it is filtered out on macOS only. **Linux is unchanged** (ssh's stderr goes straight to a file).
-- **Fixed: a possible hang on exit.** The patch first turned ssh's stderr into an `io.Pipe`; on exit, `waitCmd`'s goroutine and the cleanup `defer` then both called `Wait` on the tunnel and could block each other forever over the same "copy finished" signal. Reproduced in isolation: 5 hangs in 300 runs with a pipe, 0 with a file. The tunnel is now waited for once, and the result goes to every receiver through a channel that is closed afterwards.
-
 ## V0.2 (2026-11-17, tag `V0.2`)
 
-On top of `V0.1`; main commits `3f8429f` and `5f3716d`. Main points: support for Macs with Apple silicon, and a fix for a race that V0.1 already had.
+On top of `V0.1`; main commits `3f8429f`, `5f3716d` and `fe2e99f`. Main points: support for Macs with Apple silicon, and a fix for a race that V0.1 already had.
 
 ### Added: Apple silicon (macOS) support
 
@@ -25,6 +17,9 @@ On top of `V0.1`; main commits `3f8429f` and `5f3716d`. Main points: support for
 
 ### Fixed
 
+- **Fixed: `glasshouse monitor` timed out when `~/.ssh/config` enables `ControlMaster`.** Every session uses the same host alias `glasshouse` (macOS backend), so ssh reused another session's master and the `monitor.sock` forward never appeared. All ssh calls now carry `-o ControlMaster=no -o ControlPath=none`. (From the Mac-side patch.) On Linux, `ssh -G` showed that the command-line options override `ControlMaster auto` in the config file; a real master collision was not reproduced because Linux sessions have different ports.
+- **macOS:** the tunnel's ssh prints a harmless `setsockopt TCP_NODELAY` error for every forwarded connection; it is filtered out on macOS only. **Linux is unchanged** (ssh's stderr goes straight to a file).
+- **Fixed: a possible hang on exit.** The patch first turned ssh's stderr into an `io.Pipe`; on exit, `waitCmd`'s goroutine and the cleanup `defer` then both called `Wait` on the tunnel and could block each other forever over the same "copy finished" signal. Reproduced in isolation: 5 hangs in 300 runs with a pipe, 0 with a file. The tunnel is now waited for once, and the result goes to every receiver through a channel that is closed afterwards.
 - **Disk corruption (root cause found):** the helper attached the sparse raw disk with the `.automatic` caching mode, and under memory pressure the guest could read back stale zeros, corrupting kernels, shims and libraries (a boot that hangs, or `apt-get` crashing with `SIGILL`). It now uses `.cached` with `synchronizationMode: .full`. Disabling `discard` is only an extra safeguard now.
 - **Helper:** ignores SIGPIPE (a guest closing a connection no longer ends the VM); fixes the fd and connection object leak of every vsock connection; backs off when accept fails instead of spinning a core; clamps CPU and memory to what the Mac allows; forces a stop after 10 seconds so no VM process is left behind.
 - **macOS backend:** fixes a `Wait`/`Stop` deadlock (a session that failed to start stayed in `starting`).
@@ -39,6 +34,7 @@ On top of `V0.1`; main commits `3f8429f` and `5f3716d`. Main points: support for
 | Linux x86 regression (what V0.1 verified) | **Verified**: `doctor`, data of a saved desktop session kept, `pull` reviews first, audit chain, the disk of a session without `--keep` deleted on stop, allowlist blocking, offline |
 | The race fix | **Verified**: 6 imports in a row, the `start` resume path works |
 | Unit tests | `go vet` and `go test -race` (11 packages) pass; `vet` and `build` for `darwin/arm64` pass |
+| `glasshouse monitor` fix | **Verified** on Linux x86: 6 end-to-end runs (token 200, missing or wrong token 403, clean exit after `SIGINT`, tunnel cleaned up); `ssh -G` shows the command-line options override `ControlMaster auto`. **Not verified:** a real master collision (not reproduced on Linux); on macOS the stderr filter and the single `Wait` have unit tests only |
 | macOS: headless session | Verified by the project owner on an Apple silicon Mac (image build, verification boot, vsock SSH, file import, proxy, model gateway bridge, CC-Monitor, audit chain). **Cannot be re-checked on this repository's Linux machine** |
 | macOS: desktop window | Verified by the project owner on an Apple silicon Mac (`glasshouse run --gui`: GDM auto-login, the GNOME desktop shows in the helper's window). **Cannot be re-checked on this repository's Linux machine** |
 | macOS: `host` network mode | Unit tests pass; for what was tried on the Mac, see the README |

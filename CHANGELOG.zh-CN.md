@@ -4,17 +4,9 @@
 
 按版本记录用户能感受到的变化。每一项都标明了验证状态：**已验证** 是在真机上跑过，**未验证** 是只写了代码或只有单元测试。逐项的代码修改过程见本地笔记 `docs/CHANGELOG.md`（已列入 `.gitignore`，不在仓库中）。
 
-## V0.2.1（2026-11-17，标签 `V0.2.1`）
-
-在 `V0.2` 之上，修复 `glasshouse monitor`。
-
-- **修复：`glasshouse monitor` 在 `~/.ssh/config` 开启 `ControlMaster` 时超时。** 所有会话用同一个主机别名 `glasshouse`（macOS 后端），ssh 会复用另一个会话的 master，`monitor.sock` 的转发就永远不出现。现在所有 ssh 调用都带 `-o ControlMaster=no -o ControlPath=none`。（来自 Mac 端补丁。）Linux 上用 `ssh -G` 验证了命令行选项能盖过配置文件里的 `ControlMaster auto`；没有复现真正的 master 冲突，因为 Linux 会话的端口各不相同。
-- **macOS：** 隧道的 ssh 会为每个转发连接打印一行无害的 `setsockopt TCP_NODELAY` 错误，现在在 macOS 上过滤掉。**Linux 保持原样**（ssh 的 stderr 直接指向文件）。
-- **修复：退出时可能卡死。** 补丁原本把 ssh 的 stderr 改成 `io.Pipe`，退出时 `waitCmd` 的 goroutine 和清理用的 `defer` 会同时对隧道调用 `Wait`，两者抢同一个"拷贝结束"信号，输的一方永远等下去。独立复现：管道 300 次里卡住 5 次，文件 0 次。现在隧道只 `Wait` 一次，结果通过一个结束后关闭的 channel 交给所有接收者。
-
 ## V0.2（2026-11-17，标签 `V0.2`）
 
-在 `V0.1` 之上，主要提交 `3f8429f`、`5f3716d`。主要内容：支持 Apple 芯片 Mac，并修复一个 V0.1 就有的竞态。
+在 `V0.1` 之上，主要提交 `3f8429f`、`5f3716d`、`fe2e99f`。主要内容：支持 Apple 芯片 Mac，并修复一个 V0.1 就有的竞态。
 
 ### 新增：Apple 芯片（macOS）支持
 
@@ -25,6 +17,9 @@
 
 ### 修复
 
+- **修复：`glasshouse monitor` 在 `~/.ssh/config` 开启 `ControlMaster` 时超时。** 所有会话用同一个主机别名 `glasshouse`（macOS 后端），ssh 会复用另一个会话的 master，`monitor.sock` 的转发就永远不出现。现在所有 ssh 调用都带 `-o ControlMaster=no -o ControlPath=none`。（来自 Mac 端补丁。）Linux 上用 `ssh -G` 验证了命令行选项能盖过配置文件里的 `ControlMaster auto`；没有复现真正的 master 冲突，因为 Linux 会话的端口各不相同。
+- **macOS：** 隧道的 ssh 会为每个转发连接打印一行无害的 `setsockopt TCP_NODELAY` 错误，现在在 macOS 上过滤掉。**Linux 保持原样**（ssh 的 stderr 直接指向文件）。
+- **修复：退出时可能卡死。** 补丁原本把 ssh 的 stderr 改成 `io.Pipe`，退出时 `waitCmd` 的 goroutine 和清理用的 `defer` 会同时对隧道调用 `Wait`，两者抢同一个"拷贝结束"信号，输的一方永远等下去。独立复现：管道 300 次里卡住 5 次，文件 0 次。现在隧道只 `Wait` 一次，结果通过一个结束后关闭的 channel 交给所有接收者。
 - **磁盘损坏（根因查明）：** helper 挂载稀疏 raw 磁盘时用了 `.automatic` 缓存模式，内存吃紧时 guest 会读回陈旧的全 0，造成内核、shim、库文件损坏（启动卡住，或 `apt-get` 因 `SIGILL` 崩溃）。改用 `.cached` 并开启 `synchronizationMode: .full`。`discard` 现在只是额外保险。
 - **helper：** 忽略 SIGPIPE（guest 断开连接不再让 VM 退出）；修复每个 vsock 连接的 fd 和连接对象泄漏；accept 失败时退避，不再空转占满一个核；CPU 和内存按本机允许的范围收敛；强制停机改为 10 秒，避免 VM 进程残留。
 - **macOS 后端：** 修复 `Wait`/`Stop` 的死锁（会话启动失败后卡在 `starting`）。
@@ -39,6 +34,7 @@
 | Linux x86 回归（V0.1 已验证的功能） | **已验证**：`doctor`、保存的桌面会话数据保留、`pull` 先审阅、审计链、不带 `--keep` 停止后磁盘自动删除、白名单封锁、断网 |
 | 竞态修复 | **已验证**：连续 6 次导入成功，`start` 恢复路径正常 |
 | 单元测试 | `go vet`、`go test -race`（11 个包）通过；`darwin/arm64` 的 `vet` 和 `build` 通过 |
+| `glasshouse monitor` 修复 | **已验证**（Linux x86）：端到端连测 6 次（带令牌 200、不带或错误令牌 403、`SIGINT` 后正常退出、隧道清理干净）；`ssh -G` 确认命令行选项能盖过 `ControlMaster auto`。**未验证：** 真正的 master 冲突（Linux 上没有复现）；macOS 上的 stderr 过滤和单次 `Wait` 只有单元测试 |
 | macOS：headless 会话 | 由项目所有者在 Apple 芯片 Mac 上验证（构建镜像、校验启动、vsock SSH、文件导入、代理、模型网关转发、CC-Monitor、审计链）。**本仓库的 Linux 机器上无法复核** |
 | macOS：桌面窗口 | 由项目所有者在 Apple 芯片 Mac 上验证（`glasshouse run --gui`：GDM 自动登录，GNOME 桌面在 helper 的窗口中正常显示）。**本仓库的 Linux 机器上无法复核** |
 | macOS：`host` 网络模式 | 单元测试通过，Mac 端实测情况以 README 为准 |
