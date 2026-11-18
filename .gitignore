@@ -1,9 +1,11 @@
 # Requirements / design document: kept locally, not in the repository
 /设计文档与技术方案.md
 
-# Development notes in docs/: kept locally, not in the repository.
-# docs/policy.example.yaml is NOT ignored: the README links to it as the full policy example.
-/docs/*.md
+# Everything in docs/ is a local development note and stays out of the repository (any file type),
+# except what the README links to: the policy example and the demo screenshots.
+/docs/*
+!/docs/policy.example.yaml
+!/docs/images/
 
 # Build output
 /bin/
