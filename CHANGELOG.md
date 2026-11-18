@@ -32,7 +32,7 @@ On top of `V0.1`; main commits `3f8429f` and `5f3716d`. Main points: support for
 | The race fix | **Verified**: 6 imports in a row, the `start` resume path works |
 | Unit tests | `go vet` and `go test -race` (11 packages) pass; `vet` and `build` for `darwin/arm64` pass |
 | macOS: headless session | Verified by the project owner on an Apple silicon Mac (image build, verification boot, vsock SSH, file import, proxy, model gateway bridge, CC-Monitor, audit chain). **Cannot be re-checked on this repository's Linux machine** |
-| macOS: desktop window | Reported as verified on the Mac; the matching README update is not merged yet |
+| macOS: desktop window | Verified by the project owner on an Apple silicon Mac (`glasshouse run --gui`: GDM auto-login, the GNOME desktop shows in the helper's window). **Cannot be re-checked on this repository's Linux machine** |
 | macOS: `host` network mode | Unit tests pass; for what was tried on the Mac, see the README |
 
 ### Tried but not kept

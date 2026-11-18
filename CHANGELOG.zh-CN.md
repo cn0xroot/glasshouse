@@ -32,7 +32,7 @@
 | 竞态修复 | **已验证**：连续 6 次导入成功，`start` 恢复路径正常 |
 | 单元测试 | `go vet`、`go test -race`（11 个包）通过；`darwin/arm64` 的 `vet` 和 `build` 通过 |
 | macOS：headless 会话 | 由项目所有者在 Apple 芯片 Mac 上验证（构建镜像、校验启动、vsock SSH、文件导入、代理、模型网关转发、CC-Monitor、审计链）。**本仓库的 Linux 机器上无法复核** |
-| macOS：桌面窗口 | Mac 端报告已验证，README 里的相应更新还没有合入 |
+| macOS：桌面窗口 | 由项目所有者在 Apple 芯片 Mac 上验证（`glasshouse run --gui`：GDM 自动登录，GNOME 桌面在 helper 的窗口中正常显示）。**本仓库的 Linux 机器上无法复核** |
 | macOS：`host` 网络模式 | 单元测试通过，Mac 端实测情况以 README 为准 |
 
 ### 试过但没有保留
