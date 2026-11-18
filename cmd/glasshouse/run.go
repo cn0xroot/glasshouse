@@ -248,6 +248,11 @@ func launchSession(home string, be backend.Backend, info session.Info, pol polic
 		return fmt.Errorf("%w\n(session %s kept for inspection: glasshouse logs %s; remove with glasshouse rm %s)", err, id, id, id)
 	}
 
+	// "ready" means sshd answers; the guest may still be in cloud-init (it creates /workspace in its last stage)
+	if err := waitGuestConfigured(home, info, 4*time.Minute); err != nil {
+		return fmt.Errorf("%w (session %s is running; glasshouse logs --console %s)", err, id, id)
+	}
+
 	if !resumed && info.Project != "" && pol.Files.Mode == "copy" { // a resumed disk already holds /workspace
 		if err := importProject(home, info, pol.Files.DenyPatterns, pol.Files.MaxImport); err != nil {
 			return fmt.Errorf("import failed: %w (session %s is running)", err, id)
