@@ -4,7 +4,9 @@
 
 按版本记录用户能感受到的变化。每一项都标明了验证状态：**已验证** 是在真机上跑过，**未验证** 是只写了代码或只有单元测试。逐项的代码修改过程见本地笔记 `docs/CHANGELOG.md`（已列入 `.gitignore`，不在仓库中）。
 
-## 未发布（V0.2 之后）
+## V0.2.1（2026-11-17，标签 `V0.2.1`）
+
+在 `V0.2` 之上，修复 `glasshouse monitor`。
 
 - **修复：`glasshouse monitor` 在 `~/.ssh/config` 开启 `ControlMaster` 时超时。** 所有会话用同一个主机别名 `glasshouse`（macOS 后端），ssh 会复用另一个会话的 master，`monitor.sock` 的转发就永远不出现。现在所有 ssh 调用都带 `-o ControlMaster=no -o ControlPath=none`。（来自 Mac 端补丁。）Linux 上用 `ssh -G` 验证了命令行选项能盖过配置文件里的 `ControlMaster auto`；没有复现真正的 master 冲突，因为 Linux 会话的端口各不相同。
 - **macOS：** 隧道的 ssh 会为每个转发连接打印一行无害的 `setsockopt TCP_NODELAY` 错误，现在在 macOS 上过滤掉。**Linux 保持原样**（ssh 的 stderr 直接指向文件）。

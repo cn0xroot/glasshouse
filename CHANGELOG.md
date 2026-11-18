@@ -4,7 +4,9 @@ English | [简体中文](./CHANGELOG.zh-CN.md)
 
 What changed per version, as a user would notice it. Every item says how far it was checked: **verified** means it was run on a real machine, **not verified** means only the code was written or only unit tests exist. The step-by-step code change log is the local note `docs/CHANGELOG.md` (listed in `.gitignore`, not in the repository).
 
-## Unreleased (after V0.2)
+## V0.2.1 (2026-11-17, tag `V0.2.1`)
+
+On top of `V0.2`; fixes `glasshouse monitor`.
 
 - **Fixed: `glasshouse monitor` timed out when `~/.ssh/config` enables `ControlMaster`.** Every session uses the same host alias `glasshouse` (macOS backend), so ssh reused another session's master and the `monitor.sock` forward never appeared. All ssh calls now carry `-o ControlMaster=no -o ControlPath=none`. (From the Mac-side patch.) On Linux, `ssh -G` showed that the command-line options override `ControlMaster auto` in the config file; a real master collision was not reproduced because Linux sessions have different ports.
 - **macOS:** the tunnel's ssh prints a harmless `setsockopt TCP_NODELAY` error for every forwarded connection; it is filtered out on macOS only. **Linux is unchanged** (ssh's stderr goes straight to a file).
