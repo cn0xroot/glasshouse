@@ -44,14 +44,78 @@ func (b *Backend) Preflight(spec *backend.Spec) error {
 	if runtime.GOOS != "darwin" {
 		return errors.New("the vz backend only runs on macOS")
 	}
-	if spec.HostNet {
-		return errors.New("network.mode=host is not supported by the macOS backend yet (the VM has no NIC; all traffic goes over vsock)")
-	}
 	if spec.Arch != runtime.GOARCH {
 		return fmt.Errorf("guest architecture %s does not match this Mac (%s): Virtualization.framework cannot emulate", spec.Arch, runtime.GOARCH)
 	}
+	if translated() {
+		return errors.New("glasshouse is running under Rosetta (an amd64 build on Apple silicon): rebuild it natively with `make build` (GOARCH=arm64) so it boots arm64 guests")
+	}
 	if st, err := os.Stat(b.Helper); err != nil || st.IsDir() {
 		return fmt.Errorf("glasshouse-vz helper not found at %s (build it with `make vz-helper`, or set GLASSHOUSE_VZ)", b.Helper)
+	}
+	if err := checkEntitlement(b.Helper); err != nil {
+		return err
+	}
+	hc, err := b.Check()
+	if err != nil {
+		return err
+	}
+	if !hc.Supported {
+		return errors.New("Virtualization.framework reports this Mac cannot run VMs (needs macOS 13+; not available inside another VM)")
+	}
+	if hc.Arch != "" && hc.Arch != runtime.GOARCH {
+		return fmt.Errorf("glasshouse-vz is a %s binary but glasshouse is %s: rebuild both natively (make build vz-helper)", hc.Arch, runtime.GOARCH)
+	}
+	// The helper clamps too; refusing here gives a clear message instead of a silently smaller VM.
+	if spec.CPUs > hc.MaxCPUs && hc.MaxCPUs > 0 {
+		return fmt.Errorf("vm.cpus=%d exceeds what this Mac allows (%d)", spec.CPUs, hc.MaxCPUs)
+	}
+	if hc.MaxMemoryMiB > 0 && spec.MemoryMiB > hc.MaxMemoryMiB {
+		return fmt.Errorf("vm.memory=%dMiB exceeds what this Mac allows (%dMiB)", spec.MemoryMiB, hc.MaxMemoryMiB)
+	}
+	if spec.Dir != "" {
+		if err := checkAPFS(filepath.Dir(spec.Dir)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HostCheck is the output of `glasshouse-vz check`.
+type HostCheck struct {
+	Supported    bool   `json:"supported"`
+	Arch         string `json:"arch"`
+	MinCPUs      int    `json:"minCPUs"`
+	MaxCPUs      int    `json:"maxCPUs"`
+	MinMemoryMiB int    `json:"minMemoryMiB"`
+	MaxMemoryMiB int    `json:"maxMemoryMiB"`
+}
+
+// Check runs the helper's self-test, which also proves it starts at all (signature, architecture, macOS version).
+func (b *Backend) Check() (HostCheck, error) {
+	var hc HostCheck
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, b.Helper, "check").Output()
+	if err != nil {
+		msg := err.Error()
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			msg = strings.TrimSpace(string(ee.Stderr))
+		}
+		return hc, fmt.Errorf("glasshouse-vz does not run (%s); rebuild it with `make vz-helper`", msg)
+	}
+	if err := json.Unmarshal(out, &hc); err != nil {
+		return hc, fmt.Errorf("glasshouse-vz is too old (no `check` command); rebuild it with `make vz-helper`")
+	}
+	return hc, nil
+}
+
+// checkEntitlement makes sure the helper is signed with com.apple.security.virtualization. Without it the VM
+// fails to start with an opaque "Invalid virtual machine configuration" error.
+func checkEntitlement(helper string) error {
+	out, err := exec.Command("codesign", "-d", "--entitlements", "-", "--xml", helper).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "com.apple.security.virtualization") {
+		return fmt.Errorf("%s is not signed with the virtualization entitlement; run: codesign --force --sign - --entitlements vz-helper/glasshouse-vz.entitlements %s (or `make vz-helper`)", helper, helper)
 	}
 	return nil
 }
@@ -80,9 +144,11 @@ func (b *Backend) NetdEndpoints(spec backend.Spec) (backend.Endpoint, backend.En
 		backend.Endpoint{Network: "unix", Addr: filepath.Join(spec.Dir, "gateway.sock")}
 }
 
+// GuestNet: SSH and the model gateway always go over vsock. The egress proxy is used in allowlist mode only; in
+// network.mode=host the guest has a NAT NIC and reaches the network itself.
 func (b *Backend) GuestNet(spec backend.Spec) backend.GuestNet {
 	g := backend.GuestNet{GatewayURL: "http://127.0.0.1:8080", VsockBridge: true}
-	if !spec.Offline {
+	if !spec.Offline && !spec.HostNet {
 		g.ProxyHost, g.ProxyPort = "127.0.0.1", 3128
 	}
 	return g
@@ -105,6 +171,10 @@ type Config struct {
 	EFIVars   string    `json:"efiVars"`
 	ReadyFile string    `json:"readyFile"`
 	Forwards  []forward `json:"forwards"` // guest vsock port -> host unix socket
+	// NAT gives the guest a virtio NIC on Virtualization.framework's NAT network: it then uses the Mac's network
+	// (routing, DNS, VPN/TUN) directly. Only network.mode=host sets it; every other mode leaves the guest without a NIC.
+	NAT bool `json:"nat,omitempty"`
+	// The helper also accepts "extraDisks" (read-only build inputs) for image/build-mac.sh; sessions never use it.
 }
 
 func BuildConfig(spec backend.Spec) Config {
@@ -116,7 +186,10 @@ func BuildConfig(spec backend.Spec) Config {
 		ReadyFile: filepath.Join(spec.Dir, "vz.ready"),
 		Forwards:  []forward{{VsockPort: 8080, Unix: spec.GatewayAddr}},
 	}
-	if !spec.Offline {
+	switch {
+	case spec.HostNet:
+		c.NAT = true // the guest's own NIC; no egress proxy, no allowlist
+	case !spec.Offline:
 		c.Forwards = append(c.Forwards, forward{VsockPort: 3128, Unix: spec.ProxyAddr})
 	}
 	return c
@@ -143,34 +216,40 @@ func (b *Backend) Start(ctx context.Context, spec backend.Spec) (backend.Process
 		logf.Close()
 		return nil, err
 	}
-	p := &process{cmd: cmd, done: make(chan error, 1)}
-	go func() { p.done <- cmd.Wait(); logf.Close() }()
+	p := &process{cmd: cmd, done: make(chan struct{})}
+	go func() { p.err = cmd.Wait(); logf.Close(); close(p.done) }()
 	return p, nil
 }
 
+// process: Wait may be called from several goroutines at once (the supervisor's exit watcher and Stop). The result
+// is published by closing done, so every waiter returns; a single-value channel would leave all but one blocked.
 type process struct {
 	cmd  *exec.Cmd
-	done chan error
+	done chan struct{}
 	err  error
-	got  bool
 }
 
 func (p *process) PID() int { return p.cmd.Process.Pid }
 func (p *process) Wait() error {
-	if !p.got {
-		p.err, p.got = <-p.done, true
-	}
+	<-p.done
 	return p.err
 }
+
+// stopGrace is the least time the helper gets after SIGTERM. It asks the guest to power off and forces the VM off
+// itself after 10 s (main.swift: forcedStopAfter); SIGKILLing it before that would leave the VM running in the
+// Virtualization XPC process with nothing left to stop it.
+const stopGrace = 20 * time.Second
+
 func (p *process) Stop(grace time.Duration) error {
-	waited := make(chan struct{})
-	go func() { _ = p.Wait(); close(waited) }()
+	if grace < stopGrace {
+		grace = stopGrace
+	}
 	_ = p.cmd.Process.Signal(syscall.SIGTERM) // helper asks the guest to power off
 	select {
-	case <-waited:
+	case <-p.done:
 	case <-time.After(grace):
 		_ = p.cmd.Process.Kill()
-		<-waited
+		<-p.done
 	}
 	return nil
 }

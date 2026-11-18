@@ -72,7 +72,7 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 | 会话监督进程（审计 socket、网关/代理监听、清理、审计日志损坏时拒绝启动） | 已实现，用假 hypervisor 做过端到端测试 |
 | QEMU 后端、cloud-init、CLI | 已实现，**已在 Linux/KVM（amd64）上真实启动过** `headless` 和 `desktop`（GNOME）两种镜像，核对过 SSH、文件导入、离线模式、`pull` 审阅、审计哈希链和 CC-Monitor。尚未核对：`glasshouse gui`、真实的模型调用、手改 `audit.jsonl` 的篡改测试，以及 arm64 |
 | `image/build.sh` | 已在 Ubuntu 上端到端跑通（两种档位）；见下文"构建镜像"里的注意事项 |
-| macOS 后端（`vz-helper/` Swift） | **没有编译过**（没有 Mac/Swift 工具链），只是评审过的起点 |
+| macOS 后端（`vz-helper/` Swift） | **已在 Apple silicon 上跑通**（macOS 27、Swift 6.4、arm64）。`image/build-mac.sh` 能构建并校验镜像：每个镜像写出前都要从全新的 EFI 变量区启动一次，并通过 `dpkg --verify`。实际跑通了 `glasshouse run --shell` 会话：vsock SSH、文件导入、白名单代理（guest 无网卡）、`network.mode: host`（NAT 网卡，直接用 Mac 的网络）、模型网关转发、CC-Monitor、审计链都正常。尚未验证：desktop 配置的 GUI 窗口 |
 | CC-Monitor 集成 | hook 已写进镜像。真机已验证：服务在运行，网页界面显示被监控的 Claude Code 会话和它的审计事件（见演示）。上游代码没有逐行审查 |
 
 首次在真机上请按 `glasshouse doctor` → 构建镜像 → `glasshouse run` 的顺序走，遇到偏差优先看 `glasshouse logs --console`。
@@ -80,7 +80,7 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 ## 它怎么隔离
 
 - **文件**：不挂载任何宿主机目录。`glasshouse run ./proj` 由宿主机把项目打包（跳过 `.env*`、`*.pem`、`id_*`、`.git/config`，丢弃指向项目外的符号链接）送进 `/workspace`。`glasshouse pull` 把 guest 里的 `/workspace` 取回时，宿主机自己解析 tar：拒绝绝对路径、`..`、硬链接、设备文件，去掉 setuid 位，不会写穿符号链接；先看 diff 再写入（`files.export: review`）。
-- **网络**：guest 没有真实网卡。Linux 上用 QEMU 用户态网络加 `restrict=on`，只留三条显式转发：ssh 进、代理出、模型网关出；macOS 上虚拟机根本没有网卡，全部走 vsock。出站的 HTTP(S) 只能经宿主机上的代理，按域名白名单放行；解析出的 IP 若是私网/环回/链路本地（含云元数据地址）/宿主机自身地址一律拒绝，并把连接固定到已检查的 IP。代理用每会话的随机令牌认证。
+- **网络**：guest 没有真实网卡。Linux 上用 QEMU 用户态网络加 `restrict=on`，只留三条显式转发：ssh 进、代理出、模型网关出；macOS 上虚拟机根本没有网卡，全部走 vsock（只有 `network.mode: host` 会加一块 NAT 网卡）。出站的 HTTP(S) 只能经宿主机上的代理，按域名白名单放行；解析出的 IP 若是私网/环回/链路本地（含云元数据地址）/宿主机自身地址一律拒绝，并把连接固定到已检查的 IP。代理用每会话的随机令牌认证。
 - **凭证**：真正的模型 API Key 留在宿主机（`env:`、`file:`、`keychain:`、`secret-service:` 四种来源）。guest 里的 `ANTHROPIC_API_KEY` 只是会话令牌，网关校验后换成真 Key，且只转发 `/v1/` 路径。
 - **SSH 与 root**：每个会话生成临时 ed25519 密钥，只在宿主机会话目录里（0600），会话结束即删。sshd 只接受公钥。`glasshouse ssh` 默认进 root shell；guest 内的 root 不是安全边界，边界是虚拟机本身。
 - **审计**：`audit.jsonl` 在宿主机上，每条记录带上一条的哈希；`glasshouse logs --verify` 校验。审计日志写不进去时，网络连接和文件导出都会被拒绝（失败即关闭）。
@@ -93,10 +93,10 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 | 项目 | Linux（QEMU/KVM） | macOS（Virtualization.framework） |
 | --- | --- | --- |
 | Go | 见 `go.mod` | 同左 |
-| 虚拟化 | `qemu-system-*`，可读写 `/dev/kvm`（没有 KVM 需加 `--allow-tcg`，非常慢） | Apple Silicon，Swift 工具链 |
+| 虚拟化 | `qemu-system-*`，可读写 `/dev/kvm`（没有 KVM 需加 `--allow-tcg`，非常慢） | Apple silicon（M1 及以后）、macOS 13+、Xcode 命令行工具（Swift）。需原生运行，不能在 Rosetta 下运行 |
 | 其他工具 | `ssh`、`ssh-keygen`，以及做 cloud-init seed 的 ISO 工具（`genisoimage`/`xorriso` 等） | `codesign` |
 | 看桌面 | `virt-viewer`（`remote-viewer`） | 内置窗口 |
-| 构建镜像 | `libguestfs-tools`、`isc-dhcp-client`、`qemu-utils`、`gpgv`、`git`、`curl`、`ubuntu-cloudimage-keyring` | 在 arm64 Linux 上构建 raw 镜像后拷过来 |
+| 构建镜像 | `libguestfs-tools`、`isc-dhcp-client`、`qemu-utils`、`gpgv`、`git`、`curl`、`ubuntu-cloudimage-keyring` | `brew install qemu gnupg`，然后运行 `image/build-mac.sh`（arm64 Ubuntu cloud image） |
 
 Debian/Ubuntu 上一次装齐：
 
@@ -200,11 +200,28 @@ flowchart TD
 
 ### 3. macOS
 
+Apple silicon（M1–M5）的 Mac 只能运行 **arm64** guest：Virtualization.framework 不做 CPU 模拟。
+所以镜像基于 Canonical 官方的 Ubuntu 26.04 **arm64** cloud image（`ubuntu-26.04-server-cloudimg-arm64.img`）构建。
+用 cloud image 而不用 live-server 安装 ISO，是因为 cloud image 本身就是装好的 Ubuntu，可以直接用 cloud-init 配置。
+
 ```bash
-# 先在 arm64 Linux 上：./image/build.sh --format raw ...
-# 把 raw 镜像和它的 .sha256 拷到 ~/.local/share/glasshouse/images/
-make vz-helper   # 编译并 ad-hoc 签名 Virtualization.framework 助手
+brew install qemu gnupg            # qemu-img（qcow2 -> raw）和 gpg/gpgv（校验 Canonical 签名）
+make                               # 在 Mac 上：编译 bin/glasshouse 和已签名的 bin/glasshouse-vz，均为原生 arm64
+CC_MONITOR_REF=<40 位提交哈希> ./image/build-mac.sh --profile headless   # 也可以用 --profile desktop
+./bin/glasshouse doctor
 ```
+
+`image/build-mac.sh` 会下载 arm64 cloud image，并用 Canonical 的密钥校验签名。然后在构建 VM 里启动一次：用的是同一个
+helper，另外加一块只有镜像构建才会有的 NAT 网卡。在 guest 里安装和 `build.sh` 相同的软件（`image/provision-guest.sh`），
+清理 guest 后关机。产物是 `~/.local/share/glasshouse/images/ubuntu-26.04-arm64-<profile>.raw` 及其 `.sha256`。
+也可以继续在 arm64 Linux 上用 `./image/build.sh --format raw` 构建，再拷到 Mac 上。
+
+`glasshouse doctor` 和启动前的预检在 Mac 上会检查：
+- helper 是原生的、能启动，并带有 `com.apple.security.virtualization` entitlement 签名；
+- glasshouse 没有运行在 Rosetta 下；
+- `vm.cpus`、`vm.memory` 没有超过本机允许的上限；
+- 数据目录在 APFS 卷上；
+- 会话的 unix socket 路径不超过 macOS 的 104 字节限制（`GLASSHOUSE_HOME` 太长会在这里报错）。
 
 ### 4. 配置模型 Key
 
@@ -357,7 +374,7 @@ glasshouse stop s-1a2b3c
 | --- | --- | --- |
 | `allowlist`（默认） | 只有列出的 `域名:端口`，经宿主机代理（拒绝私网/环回/元数据地址，限制出站流量） | 最严格；仅 HTTP(S) |
 | `offline` | 除模型网关外什么都不通 | 最严格；无法订阅登录 |
-| `host` | **直接使用宿主机网络**（QEMU 用户态 NAT：走宿主机的路由、DNS、代理/TUN、VPN） | 域名白名单、私网地址封锁、出站流量上限**都不再生效**。guest 能访问宿主机能访问的一切，包括宿主机所在的局域网和 `10.0.2.2`（宿主机的环回服务）。项目的 `.glasshouse.yaml` 不能选它；启动时会打印警告并写入审计日志。macOS 暂不支持 |
+| `host` | **直接使用宿主机网络**（Linux：QEMU 用户态 NAT；macOS：Virtualization.framework NAT 网络上的 virtio 网卡，网段 `192.168.64.0/24`。两者都走宿主机的路由、DNS、代理/TUN、VPN） | 域名白名单、私网地址封锁、出站流量上限**都不再生效**。guest 能访问宿主机能访问的一切，包括宿主机所在的局域网和宿主机本身（Linux 上是 `10.0.2.2`，macOS 上是 NAT 网关，通常为 `192.168.64.1`）。项目的 `.glasshouse.yaml` 不能选它；启动时会打印警告并写入审计日志。SSH 和模型网关仍走专用通道（macOS 上是 vsock） |
 
 ```yaml
 # ~/.config/glasshouse/policy.yaml
@@ -494,7 +511,8 @@ internal/fsbridge/   安全的文件导入导出
 internal/cloudinit/  cloud-init 数据生成
 internal/session/    会话目录与生命周期
 internal/backend/    hypervisor 抽象；qemu/、vz/ 两个后端
-image/build.sh       镜像构建脚本
+image/build.sh       镜像构建脚本（Linux，libguestfs）
+image/build-mac.sh   Apple silicon Mac 的镜像构建脚本（arm64 cloud image，在 VZ VM 里构建，执行 image/provision-guest.sh）
 vz-helper/           macOS 的 Swift 助手
 docs/                策略示例；PROGRESS.md（开发进度）和 CHANGELOG.md（代码修改记录）是本地笔记，已列入 .gitignore
 ```
@@ -512,11 +530,12 @@ docs/                策略示例；PROGRESS.md（开发进度）和 CHANGELOG.m
 
 ## 常见问题
 
-- **`doctor` 报镜像缺少 `.sha256`**：镜像必须由 `image/build.sh` 构建，它会同时生成校验文件。
+- **`doctor` 报镜像缺少 `.sha256`**：镜像必须由 `image/build.sh`（Linux）或 `image/build-mac.sh`（Mac）构建，它们会同时生成校验文件。
 - **模型网关拒绝请求**：处于 API Key 模式却没有 Key。请设置 `credentials.llm_gateway.key_ref`，或者保持不设置，在 guest 里用订阅账号登录（见"网络模式与 Claude 登录"）。
 - **构建镜像下载很慢或超时**：使用镜像源，`./image/build.sh --mirror tuna`（见"构建镜像"），npm 或 GitHub 步骤慢的话再设置 `NPM_REGISTRY` / `CC_MONITOR_REPO`。
 - **构建镜像时 apt 报 `Unable to connect to 127.0.0.1:...`**：宿主机代理被带进了 guest，见上文"构建镜像"的注意事项。
-- **白名单内的域名被拒，原因是 `private-or-host-address`**：你的 DNS 返回的是假 IP（例如 Clash/TUN fake-ip 方案的 `198.18.0.x`），网络闸门把它当作非公网地址拒绝。要么让宿主机使用返回真实地址的解析器，要么设置 `network.mode: host`，让 guest 直接使用宿主机网络（包括它的代理/TUN）。
+- **白名单内的域名被拒，原因是 `private-or-host-address`**：你的 DNS 返回的是假 IP（例如 Clash/TUN fake-ip 方案的 `198.18.0.x`），网络闸门把它当作非公网地址拒绝。可以把白名单域名加进代理的 `fake-ip-filter`（或者让宿主机使用返回真实地址的解析器），也可以设置 `network.mode: host`，让 guest 直接使用宿主机网络及其代理/TUN（这样就没有白名单了）。
+- **macOS：用旧版本构建的镜像启动时卡住**（控制台没有任何输出，一个 vCPU 占满 100%），或者 `apt-get` 报 `Illegal instruction` 崩溃：helper 挂载稀疏 raw 磁盘时用的是 Virtualization.framework 的 `.automatic` 缓存模式，内存吃紧时 guest 可能对刚写入的块读回陈旧的全 0，导致内核、shim、库文件出现整页的 0。helper 现在改用 `.cached`（UTM、Lima、apple/container 也是这么修的）。重新编译 helper（`make vz-helper`）并重建镜像即可；`build-mac.sh` 写出每个镜像前，还会用一次无网络的启动来校验（`dpkg --verify` 加 EFI 引导文件）。
 - **没有 `/dev/kvm`**：把用户加进 `kvm` 组；确实没有时才用 `--allow-tcg`，速度极慢。
 - **unix socket 路径过长**：设置更短的 `GLASSHOUSE_HOME`。
 - **guest 里 `git clone git@github.com:...` 失败**：不支持裸 SSH 出站，请改用 HTTPS。

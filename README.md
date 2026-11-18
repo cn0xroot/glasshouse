@@ -72,7 +72,7 @@ Typical loop: `glasshouse run --shell ./proj` → run `claude` and describe what
 | Session supervisor (audit socket, gateway/proxy listeners, cleanup, refuses to start on a corrupted audit log) | Implemented, tested end to end with a fake hypervisor |
 | QEMU backend, cloud-init, CLI | Implemented. **Booted for real on Linux/KVM (amd64)** with both `headless` and `desktop` (GNOME) images: SSH, file import, offline mode, `pull` review, audit chain and CC-Monitor were checked. Not yet checked: `glasshouse gui`, an LLM round trip, the tamper test on `audit.jsonl`, and anything on arm64 |
 | `image/build.sh` | Runs end to end on Ubuntu (both profiles); see the notes under "Build an image" |
-| macOS backend (`vz-helper/`, Swift) | **Never compiled** (no Mac/Swift toolchain); a reviewed starting point only |
+| macOS backend (`vz-helper/`, Swift) | **Runs on Apple silicon** (macOS 27, Swift 6.4, arm64). `image/build-mac.sh` builds and verifies images: each one boots from a fresh EFI variable store and passes `dpkg --verify` before it is written. Real `glasshouse run --shell` sessions worked end to end: vsock SSH, file import, the allowlist proxy (guest without a NIC), `network.mode: host` (NAT NIC, the Mac's network), the model gateway bridge, CC-Monitor and the audit chain. Not yet checked: the desktop profile's GUI window |
 | CC-Monitor integration | Hooks are baked into the image. Verified on a real machine: the service runs and its web UI shows the monitored Claude Code session with its audit events (see Demo). The upstream code has not been reviewed line by line |
 
 On a real machine, go in this order: `glasshouse doctor` → build an image → `glasshouse run`. When something deviates, look at `glasshouse logs --console` first.
@@ -80,7 +80,7 @@ On a real machine, go in this order: `glasshouse doctor` → build an image → 
 ## How isolation works
 
 - **Files**: no host directory is mounted. `glasshouse run ./proj` makes the host pack the project (skipping `.env*`, `*.pem`, `id_*`, `.git/config`, and dropping symlinks that point outside the project) into `/workspace`. `glasshouse pull` fetches `/workspace` back and the host parses the tar itself: it rejects absolute paths, `..`, hard links and device files, strips setuid bits, never writes through symlinks, and shows a diff before writing (`files.export: review`).
-- **Network**: the guest has no real NIC. On Linux, QEMU user-mode networking with `restrict=on` leaves exactly three forwards: SSH in, proxy out, model gateway out. On macOS the VM has no NIC at all; everything goes over vsock. Outbound HTTP(S) goes only through the host proxy and is allowlisted by domain. Any resolved IP that is private, loopback, link-local (including cloud metadata) or the host itself is refused, and the connection is pinned to the checked IP. The proxy authenticates with a random per-session token.
+- **Network**: the guest has no real NIC. On Linux, QEMU user-mode networking with `restrict=on` leaves exactly three forwards: SSH in, proxy out, model gateway out. On macOS the VM has no NIC at all; everything goes over vsock (only `network.mode: host` adds a NAT NIC). Outbound HTTP(S) goes only through the host proxy and is allowlisted by domain. Any resolved IP that is private, loopback, link-local (including cloud metadata) or the host itself is refused, and the connection is pinned to the checked IP. The proxy authenticates with a random per-session token.
 - **Credentials**: the real model API key stays on the host (sources: `env:`, `file:`, `keychain:`, `secret-service:`). `ANTHROPIC_API_KEY` in the guest is just a session token; the gateway validates it, swaps in the real key, and forwards only `/v1/` paths.
 - **SSH and root**: each session generates a throwaway ed25519 key kept only in the host session directory (0600) and deleted when the session ends. sshd accepts public keys only. `glasshouse ssh` opens a root shell by default; root inside the guest is not a security boundary, the VM is.
 - **Audit**: `audit.jsonl` lives on the host and every record carries the previous record's hash; `glasshouse logs --verify` checks it. If the log cannot be written, network connections and file exports are refused (fail closed).
@@ -93,10 +93,10 @@ On a real machine, go in this order: `glasshouse doctor` → build an image → 
 | Item | Linux (QEMU/KVM) | macOS (Virtualization.framework) |
 | --- | --- | --- |
 | Go | see `go.mod` | same |
-| Virtualization | `qemu-system-*`, read/write access to `/dev/kvm` (without KVM you need `--allow-tcg`, which is very slow) | Apple Silicon, Swift toolchain |
+| Virtualization | `qemu-system-*`, read/write access to `/dev/kvm` (without KVM you need `--allow-tcg`, which is very slow) | Apple silicon (M1 or newer), macOS 13+, Xcode command line tools (Swift). Run natively, not under Rosetta |
 | Other tools | `ssh`, `ssh-keygen`, an ISO tool for the cloud-init seed (`genisoimage`, `xorriso`, …) | `codesign` |
 | Viewing the desktop | `virt-viewer` (`remote-viewer`) | built-in window |
-| Building images | `libguestfs-tools`, `isc-dhcp-client`, `qemu-utils`, `gpgv`, `git`, `curl`, `ubuntu-cloudimage-keyring` | build a raw image on arm64 Linux and copy it over |
+| Building images | `libguestfs-tools`, `isc-dhcp-client`, `qemu-utils`, `gpgv`, `git`, `curl`, `ubuntu-cloudimage-keyring` | `brew install qemu gnupg`, then `image/build-mac.sh` (arm64 Ubuntu cloud image) |
 
 On Debian/Ubuntu, install everything at once:
 
@@ -200,11 +200,29 @@ At session start the hooks are already in the image; a session with `monitor.cc_
 
 ### 3. macOS
 
+Macs with Apple silicon (M1–M5) run **arm64** guests only: Virtualization.framework does not emulate other CPUs.
+The image is therefore built from Canonical's Ubuntu 26.04 **arm64** cloud image (`ubuntu-26.04-server-cloudimg-arm64.img`).
+We use the cloud image rather than the live-server ISO because it is already an installed Ubuntu that cloud-init can configure.
+
 ```bash
-# First, on arm64 Linux: ./image/build.sh --format raw ...
-# Copy the raw image and its .sha256 to ~/.local/share/glasshouse/images/
-make vz-helper   # builds and ad-hoc signs the Virtualization.framework helper
+brew install qemu gnupg            # qemu-img (qcow2 -> raw) and gpg/gpgv (Canonical's signature)
+make                               # on a Mac: builds bin/glasshouse + the signed bin/glasshouse-vz, both native arm64
+CC_MONITOR_REF=<40-hex commit> ./image/build-mac.sh --profile headless   # and/or --profile desktop
+./bin/glasshouse doctor
 ```
+
+`image/build-mac.sh` downloads the arm64 cloud image and checks its signature against Canonical's key. It then boots
+the image once in a build VM: the same helper, plus a NAT network device that only image builds get. Inside the guest
+it installs the same software as `build.sh` (`image/provision-guest.sh`), cleans the guest and powers it off. The
+result is `~/.local/share/glasshouse/images/ubuntu-26.04-arm64-<profile>.raw` plus its `.sha256`. You can still build
+the raw image on arm64 Linux with `./image/build.sh --format raw` and copy it over.
+
+What `glasshouse doctor` / the preflight check on a Mac:
+- the helper is native, starts, and is signed with the `com.apple.security.virtualization` entitlement;
+- glasshouse is not running under Rosetta;
+- `vm.cpus` and `vm.memory` are within what this Mac allows;
+- the data directory is on APFS;
+- the session's unix-socket paths fit macOS's 104-byte limit (a long `GLASSHOUSE_HOME` fails here).
 
 ### 4. Configure the model key
 
@@ -357,7 +375,7 @@ glasshouse stop s-1a2b3c
 | --- | --- | --- |
 | `allowlist` (default) | Only the listed `host:port` entries, through the host proxy (private/loopback/metadata addresses refused, egress capped) | Strongest; HTTP(S) only |
 | `offline` | Nothing except the model gateway | Strongest; no subscription login possible |
-| `host` | **The host's network directly** (QEMU user-mode NAT: the host's routing, DNS, proxy/TUN, VPN) | The allowlist, private-address blocking and egress cap **do not apply**. The guest can reach anything the host can, including the host LAN and `10.0.2.2` (the host's loopback services). A project's `.glasshouse.yaml` can never select it, and `glasshouse` prints a warning and records it in the audit log. Not supported on macOS yet |
+| `host` | **The host's network directly** (Linux: QEMU user-mode NAT; macOS: a virtio NIC on Virtualization.framework's NAT network, `192.168.64.0/24`. Either way the guest uses the host's routing, DNS, proxy/TUN and VPN) | The allowlist, private-address blocking and egress cap **do not apply**. The guest can reach anything the host can, including the host LAN and the host itself (`10.0.2.2` on Linux, the NAT gateway, usually `192.168.64.1`, on macOS). A project's `.glasshouse.yaml` can never select it, and `glasshouse` prints a warning and records it in the audit log. SSH and the model gateway still go over the private channel (vsock on macOS) |
 
 ```yaml
 # ~/.config/glasshouse/policy.yaml
@@ -494,7 +512,8 @@ internal/fsbridge/   safe file import/export
 internal/cloudinit/  cloud-init data generation
 internal/session/    session directory and lifecycle
 internal/backend/    hypervisor abstraction; qemu/ and vz/ backends
-image/build.sh       image build script
+image/build.sh       image build script (Linux, libguestfs)
+image/build-mac.sh   image build script for Apple silicon Macs (arm64 cloud image, built in a VZ VM; runs image/provision-guest.sh)
 vz-helper/           Swift helper for macOS
 docs/                policy example; PROGRESS.md (development progress) and CHANGELOG.md (code change log) are local notes listed in .gitignore
 ```
@@ -512,11 +531,12 @@ docs/                policy example; PROGRESS.md (development progress) and CHAN
 
 ## Troubleshooting
 
-- **`doctor` says an image is missing its `.sha256`**: images must be built with `image/build.sh`, which also writes the checksum file.
+- **`doctor` says an image is missing its `.sha256`**: images must be built with `image/build.sh` (Linux) or `image/build-mac.sh` (Mac), which also write the checksum file.
 - **The model gateway refuses requests**: you are in API-key mode without a key. Set `credentials.llm_gateway.key_ref`, or leave it unset and log in with a subscription inside the guest (see "Network modes and Claude login").
 - **Image build is very slow or times out downloading**: use a mirror, `./image/build.sh --mirror tuna` (see "Build an image"), and set `NPM_REGISTRY` / `CC_MONITOR_REPO` if the npm or GitHub steps are the slow ones.
 - **apt fails with `Unable to connect to 127.0.0.1:...` during an image build**: the host proxy leaked into the guest; see the notes under "Build an image".
-- **Allowlisted domains are denied with `private-or-host-address`**: your DNS returns fake IPs (e.g. `198.18.0.x` from a Clash/TUN fake-ip setup), which the network gate treats as non-public and refuses. Either use a resolver that returns real addresses on the host, or set `network.mode: host` so the guest uses the host network (and its proxy/TUN) directly.
+- **Allowlisted domains are denied with `private-or-host-address`**: your DNS returns fake IPs (e.g. `198.18.0.x` from a Clash/TUN fake-ip setup), which the network gate treats as non-public and refuses. Add the allowlisted domains to the proxy's `fake-ip-filter` (or use a resolver that returns real addresses on the host), or set `network.mode: host` so the guest uses the host network, and its proxy/TUN, directly (no allowlist then).
+- **macOS: an image built with an older version hangs at boot** (no console output, one vCPU at 100%), or `apt-get` dies with `Illegal instruction`: the helper attached the sparse raw disk with Virtualization.framework's `.automatic` caching mode, which under memory pressure can hand the guest stale zeros for blocks it just wrote, so files (kernel, shim, libraries) got whole pages of zeros. The helper now uses `.cached` (the same fix as UTM, Lima and apple/container). Rebuild the helper (`make vz-helper`) and the image; `build-mac.sh` also verifies every image with a second, network-less boot (`dpkg --verify` plus the EFI boot files) before writing it.
 - **No `/dev/kvm`**: add your user to the `kvm` group; use `--allow-tcg` only if KVM truly is unavailable, and expect it to be very slow.
 - **Unix socket path too long**: set a shorter `GLASSHOUSE_HOME`.
 - **`git clone git@github.com:...` fails in the guest**: raw SSH egress is unsupported; use HTTPS.

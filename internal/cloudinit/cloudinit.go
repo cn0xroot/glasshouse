@@ -155,23 +155,30 @@ func Render(p Params) (userData, metaData string, err error) {
 	}
 
 	if p.VsockBridge {
-		unit := func(name, desc, exec string) {
+		unit := func(name, desc, exec, after, cond string) {
 			w("  - path: /etc/systemd/system/%s.service", name)
 			w("    permissions: '0644'")
 			w("    content: |")
 			w("      [Unit]")
 			w("      Description=%s", desc)
-			w("      After=network.target")
+			w("      After=network.target%s", after)
 			w("      [Service]")
+			if cond != "" {
+				w("      ExecCondition=%s", cond)
+			}
 			w("      ExecStart=%s", exec)
 			w("      Restart=always")
 			w("      [Install]")
 			w("      WantedBy=multi-user.target")
 		}
-		unit("glasshouse-vsock-ssh", "Glasshouse: sshd over vsock", "/usr/bin/socat VSOCK-LISTEN:22,fork,reuseaddr TCP:127.0.0.1:22")
-		unit("glasshouse-vsock-gateway", "Glasshouse: model gateway over vsock", "/usr/bin/socat TCP-LISTEN:8080,bind=127.0.0.1,fork,reuseaddr VSOCK-CONNECT:2:8080")
+		// systemd >= 256 (Ubuntu 26.04 has 259) already binds vsock port 22 to sshd itself (systemd-ssh-generator's
+		// sshd-vsock.socket, same sshd config). The socat bridge is only needed on older guests; with the condition it
+		// is skipped there instead of failing to bind and ending up "failed".
+		unit("glasshouse-vsock-ssh", "Glasshouse: sshd over vsock", "/usr/bin/socat VSOCK-LISTEN:22,fork,reuseaddr TCP:127.0.0.1:22",
+			" sshd-vsock.socket", "/bin/sh -c '! systemctl is-active --quiet sshd-vsock.socket'")
+		unit("glasshouse-vsock-gateway", "Glasshouse: model gateway over vsock", "/usr/bin/socat TCP-LISTEN:8080,bind=127.0.0.1,fork,reuseaddr VSOCK-CONNECT:2:8080", "", "")
 		if p.ProxyHost != "" {
-			unit("glasshouse-vsock-proxy", "Glasshouse: egress proxy over vsock", "/usr/bin/socat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr VSOCK-CONNECT:2:3128")
+			unit("glasshouse-vsock-proxy", "Glasshouse: egress proxy over vsock", "/usr/bin/socat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr VSOCK-CONNECT:2:3128", "", "")
 		}
 	}
 

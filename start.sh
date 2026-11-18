@@ -24,6 +24,12 @@ if [ ! -x "$GH" ] || ! "$GH" help 2>&1 | grep -q 'glasshouse start'; then
   echo "==> building glasshouse"
   make -C "$HERE" build >/dev/null
 fi
+# macOS: the VM runs in the signed Virtualization.framework helper next to the binary (or $GLASSHOUSE_VZ)
+if [ "$(uname -s)" = Darwin ] && [ -z "${GLASSHOUSE_VZ:-}" ] && [ ! -x "$(dirname "$GH")/glasshouse-vz" ]; then
+  [ "$GH" = "$HERE/bin/glasshouse" ] || die "$(dirname "$GH")/glasshouse-vz is missing; build it with: make -C $HERE vz-helper"
+  echo "==> building the Virtualization.framework helper"
+  make -C "$HERE" vz-helper >/dev/null
+fi
 
 saved_id() { if [ -s "$ID_FILE" ]; then tr -d '[:space:]' < "$ID_FILE"; fi; }
 # state of a session from `glasshouse ls`; empty when it no longer exists

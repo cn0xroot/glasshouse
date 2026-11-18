@@ -63,10 +63,15 @@ func TestRenderVariants(t *testing.T) {
 	p = base()
 	p.VsockBridge = true
 	ud, _, _ = Render(p)
-	for _, want := range []string{"VSOCK-LISTEN:22", "VSOCK-CONNECT:2:8080", "VSOCK-CONNECT:2:3128"} {
+	for _, want := range []string{"VSOCK-LISTEN:22", "VSOCK-CONNECT:2:8080", "VSOCK-CONNECT:2:3128",
+		// systemd >= 256 owns vsock:22 itself; the socat bridge must step aside instead of failing
+		"ExecCondition=/bin/sh -c '! systemctl is-active --quiet sshd-vsock.socket'", "After=network.target sshd-vsock.socket"} {
 		if !strings.Contains(ud, want) {
 			t.Errorf("vsock bridge missing %q", want)
 		}
+	}
+	if strings.Count(ud, "ExecCondition=") != 1 {
+		t.Errorf("only the ssh bridge may be conditional:\n%s", ud)
 	}
 }
 

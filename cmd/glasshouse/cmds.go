@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"glasshouse/internal/audit"
+	"glasshouse/internal/backend/vz"
 	"glasshouse/internal/fsbridge"
 	"glasshouse/internal/session"
 )
@@ -433,10 +434,17 @@ func cmdDoctor(args []string) error {
 		_, err := lookOrErr("nc")
 		check("nc (ssh over unix socket)", err)
 	}
+	check("socket path length", session.CheckSocketDir(session.Dir(home, "s-000000")))
 	pol, _, perr := effectivePolicy("", "", false, false)
 	check("policy loads", perr)
-	spec := backendSpecForDoctor(arch, pol)
+	spec := backendSpecForDoctor(home, arch, pol)
 	check("hypervisor ("+be.Name()+")", be.Preflight(&spec))
+	if v, ok := be.(*vz.Backend); ok {
+		if hc, err := v.Check(); err == nil {
+			fmt.Printf("  info  this Mac allows up to %d vCPU and %d MiB per VM (policy asks %d vCPU, %d MiB)\n",
+				hc.MaxCPUs, hc.MaxMemoryMiB, spec.CPUs, spec.MemoryMiB)
+		}
+	}
 	for _, profile := range []string{"headless", "desktop"} {
 		img := session.ImagePath(home, arch, profile, be.ImageExt())
 		check("image "+filepath.Base(img), session.VerifyImage(img))

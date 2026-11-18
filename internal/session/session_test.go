@@ -3,12 +3,13 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestCreateLoadListRemove(t *testing.T) {
-	home := t.TempDir()
+	home := shortTempDir(t)
 	id, _ := NewID()
 	if !ValidID(id) {
 		t.Fatal(id)
@@ -47,7 +48,7 @@ func TestCreateLoadListRemove(t *testing.T) {
 }
 
 func TestInvalidIDsRejected(t *testing.T) {
-	home := t.TempDir()
+	home := shortTempDir(t)
 	for _, id := range []string{"", "../x", "s-zzzzzz", "s-1234567", "/etc", "s-12345"} {
 		if ValidID(id) {
 			t.Errorf("%q valid", id)
@@ -62,7 +63,7 @@ func TestInvalidIDsRejected(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
-	home := t.TempDir()
+	home := shortTempDir(t)
 	if _, err := Resolve(home, ""); err == nil {
 		t.Fatal("no sessions: expected error")
 	}
@@ -100,7 +101,7 @@ func TestTokenShape(t *testing.T) {
 }
 
 func TestVerifyImage(t *testing.T) {
-	d := t.TempDir()
+	d := shortTempDir(t)
 	img := filepath.Join(d, "base.qcow2")
 	os.WriteFile(img, []byte("hello"), 0o600)
 	if err := VerifyImage(img); err == nil {
@@ -115,4 +116,28 @@ func TestVerifyImage(t *testing.T) {
 	if err := VerifyImage(img); err == nil {
 		t.Fatal("tampered image must fail")
 	}
+}
+
+func TestCheckSocketDir(t *testing.T) {
+	if err := CheckSocketDir("/tmp/gh/sessions/s-abc123"); err != nil {
+		t.Fatal(err)
+	}
+	long := "/" + strings.Repeat("x", SocketPathMax())
+	if err := CheckSocketDir(long); err == nil || !strings.Contains(err.Error(), "GLASSHOUSE_HOME") {
+		t.Fatalf("want a GLASSHOUSE_HOME hint, got %v", err)
+	}
+	if _, err := Create(long, "s-abc123"); err == nil {
+		t.Fatal("Create must refuse a home whose sockets cannot be bound")
+	}
+}
+
+// shortTempDir keeps session paths short enough for unix sockets on macOS ($TMPDIR there is long).
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("/tmp", "gh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
 }

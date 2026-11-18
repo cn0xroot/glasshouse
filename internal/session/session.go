@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -100,10 +101,36 @@ func Create(home, id string) (string, error) {
 		return "", err
 	}
 	dir := Dir(home, id)
+	if err := CheckSocketDir(dir); err != nil {
+		return "", err
+	}
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return "", err
 	}
 	return dir, nil
+}
+
+// longestSocket is the longest unix socket name created inside a session directory.
+const longestSocket = "gateway.sock"
+
+// SocketPathMax is the usable length of a unix socket path: sizeof(sun_path) minus the terminating NUL.
+// macOS (104) is shorter than Linux (108), so a GLASSHOUSE_HOME that works on Linux can fail on a Mac.
+func SocketPathMax() int {
+	if runtime.GOOS == "linux" {
+		return 107
+	}
+	return 103
+}
+
+// CheckSocketDir refuses a session directory whose sockets would not fit in sun_path, with an error that
+// says how to fix it, instead of the bare "bind: invalid argument" the kernel would give later.
+func CheckSocketDir(dir string) error {
+	p := filepath.Join(dir, longestSocket)
+	if len(p) > SocketPathMax() {
+		return fmt.Errorf("session directory path is too long for unix sockets on %s (%d > %d bytes: %s); set GLASSHOUSE_HOME to a shorter directory",
+			runtime.GOOS, len(p), SocketPathMax(), p)
+	}
+	return nil
 }
 
 func writeJSON(path string, v any) error {
@@ -237,7 +264,7 @@ func ImagePath(home, arch, profile, ext string) string {
 func VerifyImage(path string) error {
 	side, err := os.ReadFile(path + ".sha256")
 	if err != nil {
-		return fmt.Errorf("missing checksum file %s.sha256 (images must be built with image/build.sh)", filepath.Base(path))
+		return fmt.Errorf("missing checksum file %s.sha256 (images must be built with %s)", filepath.Base(path), buildScript())
 	}
 	fields := strings.Fields(string(side))
 	if len(fields) == 0 {
@@ -245,7 +272,7 @@ func VerifyImage(path string) error {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("base image not found: %s (build it with image/build.sh)", path)
+		return fmt.Errorf("base image not found: %s (build it with %s)", path, buildScript())
 	}
 	defer f.Close()
 	h := sha256.New()
@@ -256,6 +283,14 @@ func VerifyImage(path string) error {
 		return fmt.Errorf("base image checksum mismatch: the template was modified")
 	}
 	return nil
+}
+
+// buildScript names the image build script for this host.
+func buildScript() string {
+	if runtime.GOOS == "darwin" {
+		return "image/build-mac.sh"
+	}
+	return "image/build.sh"
 }
 
 // ImageSHA returns the checksum recorded in the image's .sha256 sidecar. Call it after VerifyImage, which proves the

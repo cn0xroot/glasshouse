@@ -23,8 +23,9 @@
 #
 # Needs (Linux host, same CPU architecture as the image): qemu-img, gpgv,
 # libguestfs-tools (virt-customize, virt-sysprep), isc-dhcp-client, git, curl, sha256sum.
-# macOS guests need a *raw* image; build it on an arm64 Linux machine with
-# --format raw and copy it (plus its .sha256) to the Mac's $GLASSHOUSE_HOME/images/.
+# macOS guests need a *raw* arm64 image: build it on the Mac itself with image/build-mac.sh (Ubuntu's arm64 cloud
+# image, customized inside a Virtualization.framework VM), or here on an arm64 Linux machine with --format raw and
+# copy it (plus its .sha256) to the Mac's $GLASSHOUSE_HOME/images/.
 set -euo pipefail
 
 ARCH="$(uname -m)"; case "$ARCH" in x86_64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; esac
@@ -48,7 +49,7 @@ case "$PROFILE" in headless|desktop) ;; *) echo "bad --profile" >&2; exit 2;; es
 case "$FORMAT" in qcow2|raw) ;; *) echo "bad --format" >&2; exit 2;; esac
 
 HOST_ARCH="$(uname -m)"; case "$HOST_ARCH" in x86_64) HOST_ARCH=amd64;; aarch64|arm64) HOST_ARCH=arm64;; esac
-[ "$(uname -s)" = Linux ] || { echo "image builds need a Linux host (libguestfs)" >&2; exit 1; }
+[ "$(uname -s)" = Linux ] || { echo "build.sh needs a Linux host (libguestfs); on a Mac use image/build-mac.sh" >&2; exit 1; }
 [ "$ARCH" = "$HOST_ARCH" ] || { echo "cannot build a $ARCH image on a $HOST_ARCH host (no emulation)" >&2; exit 1; }
 
 # Third-party guard code is pinned to an exact commit: no moving branches.
@@ -235,7 +236,7 @@ command -v dhclient >/dev/null || { echo "missing dhclient: apt install isc-dhcp
 ARGS=(-a "$WORK/work.qcow2")
 if [ -n "$APT_BASE" ]; then
   # point the guest's APT at the mirror for the build (the original file is put back at the end)
-  ARGS+=(--run-command "cd /etc/apt/sources.list.d && cp -a ubuntu.sources ubuntu.sources.glasshouse-orig && sed -i -E 's#https?://(archive|security)\.ubuntu\.com/ubuntu/?#$APT_BASE/#g' ubuntu.sources && grep -q '$APT_BASE' ubuntu.sources")
+  ARGS+=(--run-command "cd /etc/apt/sources.list.d && cp -a ubuntu.sources ubuntu.sources.glasshouse-orig && sed -i -E -e 's#https?://(archive|security)\.ubuntu\.com/ubuntu/?#$APT_BASE/#g' -e 's#https?://ports\.ubuntu\.com/ubuntu-ports/?#$APT_BASE-ports/#g' ubuntu.sources && grep -q '$APT_BASE' ubuntu.sources")
 fi
 ARGS+=(--update --install "$PKGS")
 [ "$PROFILE" = desktop ] && ARGS+=(--install "$DESKTOP_PKGS")

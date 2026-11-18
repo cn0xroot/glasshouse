@@ -86,7 +86,7 @@ func TestCheckResumable(t *testing.T) {
 }
 
 func TestStartRefusesRebuiltBaseImage(t *testing.T) {
-	t.Setenv("GLASSHOUSE_HOME", t.TempDir())
+	t.Setenv("GLASSHOUSE_HOME", shortTempDir(t))
 	testBackends["fake"] = &fakeBackend{}
 	defer delete(testBackends, "fake")
 	home, _ := session.Home()

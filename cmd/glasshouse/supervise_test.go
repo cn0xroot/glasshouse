@@ -74,7 +74,7 @@ func (b *fakeBackend) Start(_ context.Context, s backend.Spec) (backend.Process,
 }
 
 func TestSupervisorLifecycle(t *testing.T) {
-	t.Setenv("GLASSHOUSE_HOME", t.TempDir())
+	t.Setenv("GLASSHOUSE_HOME", shortTempDir(t))
 	fb := &fakeBackend{}
 	testBackends["fake"] = fb
 	defer delete(testBackends, "fake")
@@ -192,7 +192,7 @@ func TestSupervisorLifecycle(t *testing.T) {
 }
 
 func TestSupervisorRefusesCorruptAudit(t *testing.T) {
-	t.Setenv("GLASSHOUSE_HOME", t.TempDir())
+	t.Setenv("GLASSHOUSE_HOME", shortTempDir(t))
 	home, _ := session.Home()
 	id := "s-def456"
 	dir, _ := session.Create(home, id)

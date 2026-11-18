@@ -376,7 +376,7 @@ func (p Policy) Warnings() []string {
 	}
 	if p.Network.Mode == "host" {
 		w = append(w, "network.mode=host: the guest uses the host's network directly. The domain allowlist, the private/metadata address "+
-			"blocking and the egress cap do NOT apply; the guest can reach anything the host can, including the host's LAN and 10.0.2.2 (host loopback)")
+			"blocking and the egress cap do NOT apply; the guest can reach anything the host can, including the host's LAN and the host itself (10.0.2.2 on QEMU, the NAT gateway, usually 192.168.64.1, on macOS)")
 	}
 	if p.Network.Mode == "allowlist" && p.Network.MaxEgress == 0 {
 		w = append(w, "network.max_egress=0 means unlimited outbound bytes")
