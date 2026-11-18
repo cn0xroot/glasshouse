@@ -71,7 +71,7 @@ Typical loop: `glasshouse run --shell ./proj` → run `claude` and describe what
 | Policy parsing and tighten-only merge, audit hash chain, network gate (allowlist, DNS-rebinding protection, private/metadata address blocking, traffic cap), HTTP proxy, LLM gateway, safe file import/export | Implemented, unit-tested; `go test -race ./...` passes |
 | Session supervisor (audit socket, gateway/proxy listeners, cleanup, refuses to start on a corrupted audit log) | Implemented, tested end to end with a fake hypervisor |
 | QEMU backend, cloud-init, CLI | Implemented. **Booted for real on Linux/KVM (amd64)** with both `headless` and `desktop` (GNOME) images: SSH, file import, offline mode, `pull` review, audit chain and CC-Monitor were checked. Not yet checked: `glasshouse gui`, an LLM round trip, the tamper test on `audit.jsonl`, and anything on arm64 |
-| `image/build.sh` | Runs end to end on Ubuntu (both profiles); see the notes under "Build an image" |
+| `image/build.sh` | Runs end to end on Ubuntu (both profiles); see the notes under "Step 8: Build the images" |
 | macOS backend (`vz-helper/`, Swift) | **Runs on Apple silicon** (macOS 27, Swift 6.4, arm64). `image/build-mac.sh` builds and verifies images: each one boots from a fresh EFI variable store and passes `dpkg --verify` before it is written. Real `glasshouse run --shell` sessions worked end to end: vsock SSH, file import, the allowlist proxy (guest without a NIC), `network.mode: host` (NAT NIC, the Mac's network), the model gateway bridge, CC-Monitor and the audit chain. A `glasshouse run --gui` session opened the GNOME desktop (GDM auto-login on virtio-gpu) in the helper's window |
 | CC-Monitor integration | Hooks are baked into the image. Verified on a real machine: the service runs and its web UI shows the monitored Claude Code session with its audit events (see Demo). The upstream code has not been reviewed line by line |
 
@@ -88,62 +88,215 @@ On a real machine, go in this order: `glasshouse doctor` → build an image → 
 
 ## Installation
 
-### Requirements
+Follow the steps in order; each step ends with a **check** that tells you whether to go on. Steps 1 to 10 are for **Linux (QEMU/KVM)**, the platform that was verified on a real machine. Apple silicon Macs have their own steps in [Installation on macOS](#installation-on-macos-apple-silicon).
 
-| Item | Linux (QEMU/KVM) | macOS (Virtualization.framework) |
+| Step | What you do | Roughly |
 | --- | --- | --- |
-| Go | see `go.mod` | same |
-| Virtualization | `qemu-system-*`, read/write access to `/dev/kvm` (without KVM you need `--allow-tcg`, which is very slow) | Apple silicon (M1 or newer), macOS 13+, Xcode command line tools (Swift). Run natively, not under Rosetta |
-| Other tools | `ssh`, `ssh-keygen`, an ISO tool for the cloud-init seed (`genisoimage`, `xorriso`, …) | `codesign` |
-| Viewing the desktop | `virt-viewer` (`remote-viewer`) | built-in window |
-| Building images | `libguestfs-tools`, `isc-dhcp-client`, `qemu-utils`, `gpgv`, `git`, `curl`, `ubuntu-cloudimage-keyring` | `brew install qemu gnupg`, then `image/build-mac.sh` (arm64 Ubuntu cloud image) |
+| 1 | Check the machine (CPU, KVM, disk, memory, network) | 2 min |
+| 2 | Install the packages | 5 min |
+| 3 | Let your user open `/dev/kvm` | 1 min |
+| 4 | Get the source and check the Go version | 2 min |
+| 5 | Build and test the `glasshouse` binary | 2 to 5 min |
+| 6 | Run `glasshouse doctor` | 1 min |
+| 7 | Pick the CC-Monitor commit | 5 min (to review it) |
+| 8 | Build the images (`headless`, and `desktop` if you want a GUI) | depends mostly on your network; not timed |
+| 9 | Write the policy file (model key or subscription login) | 2 min |
+| 10 | Start a first session and run the smoke test | 5 min |
 
-On Debian/Ubuntu, install everything at once:
+### Step 1: Check the machine
+
+| Item | What is needed | How to check |
+| --- | --- | --- |
+| OS and CPU | Linux on x86-64 (`amd64`) or arm64. The image architecture must **match the host** (no emulation); the x86-64 path is the one verified on a real machine | `uname -sm` prints `Linux x86_64` |
+| KVM | Hardware virtualization on, `/dev/kvm` present. Without it you need `--allow-tcg` (software emulation), which is very slow | `ls -l /dev/kvm` |
+| Disk | Images are about 2.2 GB (`headless`) and 3.6 GB (`desktop`), plus about 0.9 GB for the cached base image, plus working space while building. **Keep at least 15 GB free** (an estimate, not measured) | `df -h ~/.local/share` |
+| Memory and CPUs | A session defaults to the values in `vm.cpus` and `vm.memory` of the policy, and builds need some memory for libguestfs. 8 GB of host RAM is a sensible minimum (an estimate) | `free -g`, `nproc` |
+| Network | The build downloads about 800 MB of base image plus apt, npm and git data. In mainland China see the mirror options in step 8 | |
+
+**Check:** `/dev/kvm` exists. If it does not, turn on VT-x/AMD-V in the BIOS (and in the hypervisor, if this machine is itself a VM: nested virtualization).
+
+### Step 2: Install the packages
+
+What each part is for:
+
+| Package | Used for |
+| --- | --- |
+| `qemu-system-x86` (or `qemu-system-arm` on arm64), `qemu-utils` | running the VM, `qemu-img` |
+| `genisoimage` (or `xorriso`) | building the cloud-init seed disk of every session |
+| `openssh-client` | `glasshouse ssh`, file transfer, the monitor tunnel |
+| `virt-viewer` | `remote-viewer`, to see the desktop (only needed for `--gui`) |
+| `libguestfs-tools`, `isc-dhcp-client` | building images (`virt-customize`; its helper VM needs a DHCP client for networking) |
+| `gpgv`, `ubuntu-cloudimage-keyring` | checking Canonical's signature on the base image |
+| `git`, `curl` | fetching CC-Monitor and the base image |
+| Go (see `go.mod`; currently 1.24.7 or newer) | compiling `glasshouse` |
+
+On Debian/Ubuntu:
 
 ```bash
+sudo apt update
 sudo apt install qemu-system-x86 qemu-utils genisoimage openssh-client virt-viewer \
                  libguestfs-tools isc-dhcp-client gpgv git curl ubuntu-cloudimage-keyring
-sudo usermod -aG kvm "$USER"    # takes effect after you log in again
 ```
 
-### 1. Build and test
+Go: take the version from <https://go.dev/dl/> if your distribution's package is older than `go.mod` asks for (`sudo apt install golang-go` is enough only when it is new enough).
+
+Other distributions: install the equivalent packages. Only Ubuntu was tested.
+
+**Check:**
 
 ```bash
-make test        # go vet + go test -race
+qemu-system-x86_64 --version | head -1 && qemu-img --version | head -1 && virt-customize --version && gpgv --version | head -1
+command -v dhclient ssh remote-viewer
+command -v genisoimage || command -v xorriso      # either one is enough
+go version
+```
+
+Output on the test machine (your versions will differ):
+
+```text
+QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+qemu-img version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+virt-customize 1.52.0
+gpgv (GnuPG) ...
+/usr/sbin/dhclient
+/usr/bin/ssh
+/usr/bin/remote-viewer
+/usr/bin/xorriso
+go version go1.26.4 linux/amd64
+```
+
+Every command must print something. `dhclient` is the one people forget; without it every `apt` call in the image build fails with "Temporary failure resolving".
+
+### Step 3: Let your user open `/dev/kvm`
+
+```bash
+sudo usermod -aG kvm "$USER"
+```
+
+Log out and in again (or reboot) so the group applies. If you work as root there is nothing to do.
+
+**Check:**
+
+```bash
+id -nG | tr ' ' '\n' | grep -x kvm            # prints kvm (root is not in this group; skip this line as root)
+test -r /dev/kvm -a -w /dev/kvm && echo ok     # prints ok
+ls -l /dev/kvm                                  # crw-rw----+ 1 root kvm 10, 232 ... /dev/kvm
+```
+
+The second line printing `ok` is what counts.
+
+### Step 4: Get the source
+
+```bash
+git clone https://github.com/cn0xroot/glasshouse.git glasshouse
+cd glasshouse
+go version        # must satisfy the `go` line in go.mod
+```
+
+**Check:** `ls` shows `Makefile`, `cmd/`, `image/`, `internal/`, `go.mod`.
+
+### Step 5: Build and test
+
+```bash
+make test        # go vet + go test -race ./... (all packages must say ok)
 make build       # produces bin/glasshouse
+./bin/glasshouse --help
+```
+
+The end of `make test` should look like this (timings and `(cached)` vary); any `FAIL` line means it did not pass:
+
+```text
+go vet ./...
+go test -race ./...
+ok  	glasshouse/cmd/glasshouse	5.607s
+ok  	glasshouse/internal/audit	(cached)
+?   	glasshouse/internal/backend	[no test files]
+ok  	glasshouse/internal/backend/qemu	1.361s
+... (11 packages report ok)
+```
+
+`make build` prints only `go build -o bin/glasshouse ./cmd/glasshouse`; the binary is about 11 MB.
+
+Optional: put the binary on your `PATH` (`sudo install -m 0755 bin/glasshouse /usr/local/bin/`); the rest of this document uses `./bin/glasshouse` or just `glasshouse`.
+
+**Check:** `bin/glasshouse` exists and `--help` lists `run`, `ssh`, `gui`, `monitor`, `pull`, `ls`, `logs`, `start`, `stop`, `rm`, `policy`, `doctor`. If `make test` fails, stop here and do not build images: something in your toolchain differs.
+
+### Step 6: Run `doctor`
+
+```bash
 ./bin/glasshouse doctor
 ```
 
-`doctor` checks ssh, the ISO tool, the policy file, the hypervisor and the images. The image check fails on a first run; that is expected.
+`doctor` checks `ssh`, `ssh-keygen`, the ISO tool, the socket path length, whether the policy file loads, the hypervisor, and the images. **On a first run the two image checks fail; that is expected** and looks like this:
 
-### 2. Build an image
-
-`image/build.sh` starts from Canonical's official cloud image (GPG-verified and SHA256-checked), installs developer tools and a pinned CC-Monitor commit, and writes the image plus its `.sha256`:
-
-```bash
-# CC_MONITOR_REF must be a reviewed 40-hex commit; the script never tracks a branch
-CC_MONITOR_REF=<40-hex-commit> ./image/build.sh --profile headless   # for --shell
-CC_MONITOR_REF=<40-hex-commit> ./image/build.sh --profile desktop    # for --gui, with GNOME desktop
-# Claude Code is installed at its newest release by default; to override: CLAUDE_CODE_VERSION=stable (or an exact x.y.z)
-CLAUDE_CODE_VERSION=stable CC_MONITOR_REF=<...> ./image/build.sh --profile headless
+```text
+  ok    ssh
+  ok    ssh-keygen
+  ok    ISO tool (cloud-init seed)
+  ok    socket path length
+  ok    policy loads
+  ok    hypervisor (qemu)
+  FAIL  image ubuntu-26.04-amd64-headless.qcow2 missing checksum file ... (images must be built with image/build.sh)
+  FAIL  image ubuntu-26.04-amd64-desktop.qcow2 missing checksum file ...
+  note  credentials.llm_gateway.key_ref is not set: the model gateway will refuse requests
 ```
 
-Options: `--arch amd64|arm64` (must match the host), `--profile headless|desktop`, `--format qcow2|raw`. Images are written to `$GLASSHOUSE_HOME/images/`.
+**Check:** every line except the `image ...` ones is `ok` or `note`. A `FAIL` on `hypervisor`, `ssh` or the ISO tool means step 2 or 3 is incomplete. The `note` is fine when you log in with a subscription account (step 9).
 
-Notes:
+### Step 7: Pick the CC-Monitor commit
 
-- **If your host uses a proxy**: libguestfs forwards proxy environment variables into the build guest, where `127.0.0.1` is the guest itself, so every apt call fails. The script now clears those variables around `virt-customize`; the base image download still uses your proxy.
+The image bakes in [CC-Monitor](https://github.com/cn0xroot/CC-Monitor), which watches Claude Code inside the guest. It is third-party code that runs in your VM, so the build refuses a branch name and wants an **exact 40-character commit hash**, which you should look at before you trust it:
+
+```bash
+git ls-remote https://github.com/cn0xroot/CC-Monitor.git HEAD     # prints the current commit
+git clone https://github.com/cn0xroot/CC-Monitor.git /tmp/cc-monitor-review
+git -C /tmp/cc-monitor-review log --oneline -5                     # and read what changed
+export CC_MONITOR_REF=<the 40-hex commit you reviewed>
+```
+
+The commit used on the test machine was `1b3516f5b5152f882daad6e6d5c2506bf166a35a`. The upstream code has not been reviewed line by line by this project; reviewing it is your decision.
+
+**Check:** `echo "$CC_MONITOR_REF" | grep -Eq '^[0-9a-f]{40}$' && echo ok` prints `ok`.
+
+### Step 8: Build the images
+
+`image/build.sh` starts from Canonical's official cloud image (GPG-verified and SHA256-checked), installs developer tools, Claude Code (newest release), ccstatusline and the pinned CC-Monitor, and writes the image plus its `.sha256`. Run it with `bash` (it is not marked executable):
+
+```bash
+# 8a. Lightweight image for --shell (build this one first; it is the smaller one)
+bash ./image/build.sh --profile headless
+
+# 8b. Desktop image for --gui (GNOME), only if you want the desktop
+bash ./image/build.sh --profile desktop
+```
+
+`CC_MONITOR_REF` is read from the environment you exported in step 7. In mainland China add `--mirror tuna` (or `ustc`, or leave `auto`); see the mirror notes below. To pin Claude Code: `CLAUDE_CODE_VERSION=stable bash ./image/build.sh --profile headless` (or an exact `x.y.z`).
+
+What you will see, in order: the mirror choice, the Canonical signature check, the base image download (about 800 MB, cached afterwards), the CC-Monitor clone and hash check, growing the root partition, the `virt-customize` phase (apt, Node, Claude Code, CC-Monitor), cleanup, and finally the compressed image being written. The build has **not been timed**; the download and the apt/npm steps dominate. It is safe to run again: the image is written to a temporary file first and renamed into place only when complete, so a failed build never leaves a broken image behind.
+
+Options: `--arch amd64|arm64` (must match the host), `--profile headless|desktop`, `--format qcow2|raw`, `--mirror auto|official|tuna|ustc`, `--keep-mirror`. Images are written to `$GLASSHOUSE_HOME/images/` (default `~/.local/share/glasshouse/images/`).
+
+**Check:**
+
+```bash
+ls -lh ~/.local/share/glasshouse/images/
+(cd ~/.local/share/glasshouse/images && sha256sum -c ubuntu-26.04-amd64-headless.qcow2.sha256)
+./bin/glasshouse doctor      # now the image lines say ok
+```
+
+On the test machine the files were `ubuntu-26.04-amd64-headless.qcow2` (2.2 GB) and `ubuntu-26.04-amd64-desktop.qcow2` (3.6 GB).
+
+#### Notes on building
+
 - Claude Code is installed from npm (`@anthropic-ai/claude-code`, Node 22 or newer is required and the image's nodejs satisfies it). The build installs the newest release (`latest`) and fails if `claude --version` does not run; the installed version is recorded in `/etc/glasshouse-claude-code-version` inside the image.
-- libguestfs needs a DHCP client (`isc-dhcp-client`) to give the build guest a network; without it every apt call fails with "Temporary failure resolving". The script checks for `dhclient` up front.
-- The root partition is grown **in place** before installing packages. Do not use `virt-resize` here: it renumbers and moves partitions, which breaks GRUB's BIOS boot record (the VM hangs at "Booting from Hard Disk...").
 - CC-Monitor's npm dependencies live in the `webui/` subdirectory of its repo. The script handles that (`npm ci --omit=dev`) and fails the build if it breaks. Override with `CC_MONITOR_SETUP_CMD`.
 - The build needs internet access. The base image is about 800 MB and is cached in `$GLASSHOUSE_HOME/cache/`.
 - **Mirrors for mainland China.** `--mirror auto|official|tuna|ustc` (or `GLASSHOUSE_MIRROR`) picks where the cloud image and the build guest's APT packages come from:
 
   ```bash
-  ./image/build.sh --profile headless                  # auto: probes the official servers, Tsinghua (tuna) and USTC
-  ./image/build.sh --profile headless --mirror tuna    # force Tsinghua
-  ./image/build.sh --profile headless --mirror ustc    # force USTC
+  bash ./image/build.sh --profile headless                  # auto: probes the official servers, Tsinghua (tuna) and USTC
+  bash ./image/build.sh --profile headless --mirror tuna    # force Tsinghua
+  bash ./image/build.sh --profile headless --mirror ustc    # force USTC
   ```
 
   `auto` stays on Canonical's servers unless they are unreachable or a mirror is at least twice as fast, prints what it measured, and falls back to the next source if a download fails. The image is **always** verified against Canonical's GPG-signed `SHA256SUMS`, and apt verifies its own signatures, so a mirror does not have to be trusted. The guest's APT source is switched to the mirror only for the build and put back to the official one at the end, so `network.allow` (which lists `archive.ubuntu.com`) keeps working; `--keep-mirror` leaves the mirror in the image, in which case add its host to `network.allow` (or use `network.mode: host`). Notes: USTC refused the image download from some networks (HTTP 403), which is why `auto` falls back; the mirrors serve `resolute/current`, the same image as the official `releases/26.04/release` (identical checksum when this was checked).
@@ -198,33 +351,26 @@ flowchart TD
 
 At session start the hooks are already in the image; a session with `monitor.cc_monitor: false` removes `/etc/claude-code/managed-settings.json`, and an image built without the hooks gets them installed as a fallback (see `internal/cloudinit`).
 
-### 3. macOS
+#### If the build fails
 
-Macs with Apple silicon (M1–M5) run **arm64** guests only: Virtualization.framework does not emulate other CPUs.
-The image is therefore built from Canonical's Ubuntu 26.04 **arm64** cloud image (`ubuntu-26.04-server-cloudimg-arm64.img`).
-We use the cloud image rather than the live-server ISO because it is already an installed Ubuntu that cloud-init can configure.
+| Symptom | Cause and fix |
+| --- | --- |
+| `missing tool: virt-customize` or similar | step 2 is incomplete |
+| every `apt` call says "Temporary failure resolving" | `isc-dhcp-client` is missing: libguestfs needs a DHCP client to give the build guest a network (the script checks `dhclient` up front) |
+| `supermin: failed to read kernel` / cannot read `/boot/vmlinuz-*` | a known libguestfs issue on Ubuntu, where kernels are root-only: `sudo chmod +r /boot/vmlinuz-*` (not met on the test machine, which builds as root) |
+| `CC_MONITOR_REF must be a full 40-character commit hash` | step 7: a branch name or a short hash was given |
+| the base image download is slow, stalls or returns 403 | use `--mirror tuna` or `--mirror ustc`; the signature check stays on whatever the source |
+| npm or GitHub steps are slow | `NPM_REGISTRY=https://registry.npmmirror.com`, `CC_MONITOR_REPO=<a GitHub mirror>` |
+| the host uses a proxy and `apt` says `Unable to connect to 127.0.0.1:...` | libguestfs forwards proxy variables into the guest, where `127.0.0.1` is the guest itself. The script clears them around `virt-customize`; the base image download still uses your proxy |
+| the new image hangs at "Booting from Hard Disk..." | `virt-resize` renumbers and moves partitions, which breaks GRUB's BIOS boot record. `build.sh` grows the root partition in place; do not switch to `virt-resize` |
 
-```bash
-brew install qemu gnupg            # qemu-img (qcow2 -> raw) and gpg/gpgv (Canonical's signature)
-make                               # on a Mac: builds bin/glasshouse + the signed bin/glasshouse-vz, both native arm64
-CC_MONITOR_REF=<40-hex commit> ./image/build-mac.sh --profile headless   # and/or --profile desktop
-./bin/glasshouse doctor
-```
+### Step 9: Write the policy file
 
-`image/build-mac.sh` downloads the arm64 cloud image and checks its signature against Canonical's key. It then boots
-the image once in a build VM: the same helper, plus a NAT network device that only image builds get. Inside the guest
-it installs the same software as `build.sh` (`image/provision-guest.sh`), cleans the guest and powers it off. The
-result is `~/.local/share/glasshouse/images/ubuntu-26.04-arm64-<profile>.raw` plus its `.sha256`. You can still build
-the raw image on arm64 Linux with `./image/build.sh --format raw` and copy it over.
+Without a policy file the built-in defaults apply (allowlist network, no model key). Pick **one** way for Claude Code to authenticate.
 
-What `glasshouse doctor` / the preflight check on a Mac:
-- the helper is native, starts, and is signed with the `com.apple.security.virtualization` entitlement;
-- glasshouse is not running under Rosetta;
-- `vm.cpus` and `vm.memory` are within what this Mac allows;
-- the data directory is on APFS;
-- the session's unix-socket paths fit macOS's 104-byte limit (a long `GLASSHOUSE_HOME` fails here).
+**A. Subscription login (no API key).** Do nothing, or write a policy without `key_ref`. The default allowlist already contains `claude.ai`, `platform.claude.com` and `api.anthropic.com`. You log in inside the guest the first time you run `claude` (see [Network modes and Claude login](#network-modes-and-claude-login)). `doctor` prints a `note` about `key_ref`; that is expected.
 
-### 4. Configure the model key
+**B. API key through the model gateway** (the real key stays on the host):
 
 ```bash
 mkdir -p ~/.config/glasshouse && cat > ~/.config/glasshouse/policy.yaml <<'YAML'
@@ -235,6 +381,123 @@ credentials:
 YAML
 ./bin/glasshouse policy check
 ```
+
+`key_ref` forms: `env:NAME` (an environment variable, easiest on Linux), `secret-service:NAME` (the desktop keyring), `keychain:NAME` (macOS), `file:/path` (a file only you can read).
+
+**Check:** `./bin/glasshouse policy check` prints no error. More on every setting: [Policy configuration](#policy-configuration).
+
+### Step 10: First session and smoke test
+
+```bash
+mkdir -p ~/glasshouse-demo && echo "hello from the host" > ~/glasshouse-demo/hello.txt
+./bin/glasshouse run --shell ~/glasshouse-demo
+```
+
+The first boot takes a minute or two (`run` waits up to 6 minutes). You land in a shell as the `agent` user in `/workspace`. Inside the guest:
+
+```bash
+pwd                  # /workspace
+whoami               # agent
+cat hello.txt        # hello from the host   (the project was copied in)
+claude --version     # the Claude Code in the image
+echo "made in the guest" > result.txt
+exit                 # leaving the shell does NOT stop the VM
+```
+
+Back on the host:
+
+```bash
+./bin/glasshouse ls                     # the session is `ready`
+./bin/glasshouse pull                   # shows result.txt as `added`; answer y to write it into ~/glasshouse-demo
+cat ~/glasshouse-demo/result.txt
+./bin/glasshouse logs --verify          # the audit hash chain must verify
+./bin/glasshouse stop                   # the session disk is deleted unless you started with --keep
+```
+
+Two quick isolation checks, if you want them: `./bin/glasshouse run --shell --offline` and `curl -sS -m 8 https://example.com` inside the guest must fail; in the default allowlist mode `curl -sS -m 8 http://169.254.169.254` must be refused (`glasshouse logs` shows `net.deny`).
+
+Expected output (the session ID differs each time; `pull --yes` stands in for answering `y`):
+
+```text
+session s-9c9e2d starting (first boot can take a minute or two)...
+imported 1 files (20B) into /workspace
+session s-9c9e2d ready
+/workspace
+agent
+hello from the host
+2.1.326 (Claude Code)
+...
+1 change(s) from the guest (2 files received, 0 skipped):
+  added     result.txt
+applied
+audit log OK: 5 records, chain intact
+session s-9c9e2d stopped
+```
+
+With `network.mode: host` a `warning: network.mode=host ...` line is printed before the start; that is normal.
+
+**Check:** `result.txt` arrived on the host only after you answered `y` to the `pull` review, and `logs --verify` passed. That is the whole loop: `run`, work, `pull`, `logs --verify`, `stop`.
+
+Optional: the desktop. Needs the `desktop` image from step 8b and `remote-viewer`:
+
+```bash
+./bin/glasshouse run --gui ~/glasshouse-demo      # opens the desktop window when ready
+./bin/glasshouse gui                              # reopen the window later
+```
+
+If the desktop asks for a password, see [Usage troubleshooting](#usage-troubleshooting). To keep the desktop's data across restarts use `start.sh` (see [`start.sh`](#startsh-the-desktop-vm-that-keeps-its-data)).
+
+### Updating and removing
+
+- **Update the program:** `git pull && make test && make build`.
+- **Update the images** (for example to get a newer Claude Code): run step 8 again. Running sessions are not affected, but a session kept with `--keep` is layered on the old image and **refuses to start** after a rebuild; pull what you need, then `glasshouse rm` it.
+- **Remove a session:** `glasshouse rm <session>`. **Remove everything:** stop all sessions, then delete `$GLASSHOUSE_HOME` (default `~/.local/share/glasshouse`; it holds images, the download cache, sessions and audit logs, so copy the audit logs first if you need them) and `~/.config/glasshouse`.
+
+### Installation on macOS (Apple silicon)
+
+Macs with Apple silicon (M1 to M5) run **arm64** guests only: Virtualization.framework does not emulate other CPUs, so the x86-64 images of the Linux steps cannot be used. The image is built from Canonical's Ubuntu 26.04 **arm64** cloud image (`ubuntu-26.04-server-cloudimg-arm64.img`), not the live-server ISO, because the cloud image is already an installed Ubuntu that cloud-init can configure. This path was verified by the project owner on an Apple silicon Mac; it cannot be re-checked on the repository's Linux machine.
+
+**Mac step 1: Check the Mac.** macOS 13 or newer, Apple silicon (`uname -m` prints `arm64`). Open a **native** terminal, not one running under Rosetta (`sysctl -n sysctl.proc_translated` must print `0`). The data directory must be on APFS, and 15 GB free is a sensible minimum (an estimate).
+
+**Mac step 2: Install the tools.**
+
+```bash
+xcode-select --install             # Swift and codesign (skip if already installed)
+brew install go qemu gnupg         # Go; qemu-img (qcow2 -> raw); gpg/gpgv (Canonical's signature)
+```
+
+Check: `swift --version`, `go version`, `qemu-img --version`, `gpgv --version | head -1`, `command -v codesign` all print something, and `go version` says `darwin/arm64`.
+
+**Mac step 3: Get the source and build.**
+
+```bash
+git clone https://github.com/cn0xroot/glasshouse.git glasshouse && cd glasshouse
+make                               # on a Mac this builds bin/glasshouse and the signed bin/glasshouse-vz together, both native arm64
+```
+
+Do not build the two with separate commands: `make` keeps the pair matching, and it refuses to run under Rosetta. At the end it runs `bin/glasshouse-vz check`. Check: `bin/glasshouse` and `bin/glasshouse-vz` exist; `file bin/glasshouse` says `arm64`.
+
+**Mac step 4: Pick the CC-Monitor commit.** Same as Linux [step 7](#step-7-pick-the-cc-monitor-commit): review a commit of CC-Monitor and `export CC_MONITOR_REF=<40-hex commit>`.
+
+**Mac step 5: Build the image.**
+
+```bash
+./image/build-mac.sh --profile headless     # and/or --profile desktop
+```
+
+The script downloads the arm64 cloud image and checks it against Canonical's key, then boots it once in a build VM (the same helper plus a NAT network device that only image builds get). Inside the guest it installs the same software as `build.sh` (`image/provision-guest.sh`), cleans the guest and powers it off. Finally it boots the result once more **without network** and runs `dpkg --verify` and a check of the EFI boot files; an image that fails is not written. The build gives up after 5400 seconds (`BUILD_TIMEOUT`), and `--cpus` and `--memory` size the build VM. The mirror options and the optional variables are the same as on Linux.
+
+The result is `~/.local/share/glasshouse/images/ubuntu-26.04-arm64-<profile>.raw` plus its `.sha256`. You can also build the raw image on an arm64 Linux machine with `./image/build.sh --format raw` and copy both files over.
+
+**Mac step 6: Check with `doctor`.**
+
+```bash
+./bin/glasshouse doctor
+```
+
+On a Mac it also checks that the helper is native, starts, and is signed with the `com.apple.security.virtualization` entitlement; that glasshouse is not under Rosetta; that `vm.cpus` and `vm.memory` are within what this Mac allows; that the data directory is on APFS; and that the session's unix-socket paths fit macOS's 104-byte limit (a long `GLASSHOUSE_HOME` fails here).
+
+**Mac step 7: Policy, then the first session.** Write the policy as in Linux [step 9](#step-9-write-the-policy-file) (on a Mac `keychain:NAME` is the natural `key_ref`), then run the smoke test of Linux [step 10](#step-10-first-session-and-smoke-test). On macOS `network.mode: host` uses a NAT network device instead of QEMU's user-mode network; the host is then reachable at the NAT gateway, usually `192.168.64.1`.
 
 ## Usage
 
@@ -355,6 +618,24 @@ glasshouse ls
 glasshouse ssh s-1a2b3c
 glasshouse stop s-1a2b3c
 ```
+
+### Sending files to the VM (host to guest)
+
+Besides the project directory that `glasshouse run <dir>` packs into `/workspace`, you can hand over single files later (a dataset, an installer, a model) by serving them from the host with Python and downloading them inside the guest. The guest reaches the host at **`10.0.2.2`** (QEMU's address for the host; the Linux/QEMU backend).
+
+```bash
+# 1. On the host: serve a directory (only that directory is exposed)
+cd ~/share && python3 -m http.server 8000 --bind 127.0.0.1
+
+# 2. In the guest (glasshouse ssh, or the desktop terminal)
+curl -fO http://10.0.2.2:8000/data.zip        # or: wget http://10.0.2.2:8000/data.zip
+```
+
+- **This only works with `network.mode: host`** (see [Network modes](#network-modes-and-claude-login)). `allowlist` and `offline` refuse the host on purpose (private addresses are blocked and QEMU runs with `restrict=on`), so the request fails: this was tried, the proxy answers `403` and a direct connection gets no answer.
+- Binding to `127.0.0.1` is enough, because QEMU forwards `10.0.2.2` to the host's loopback. Do not bind to `0.0.0.0` unless you want other machines on your LAN to download the files as well.
+- In `host` mode the guest can reach everything the host can, so serve only a dedicated directory, never `$HOME`, and stop the server (`Ctrl+C`) when the transfer is done.
+- Checked on Linux x86 (host mode: `curl` and `wget` from a `--shell` session downloaded a file from the host server). **Not checked on macOS**: there the host is the NAT gateway, usually `192.168.64.1` (see the table above), so use `http://192.168.64.1:8000/...` and bind the server to `0.0.0.0` or that address.
+- The other direction (guest to host) is `glasshouse pull`, which reviews changes before writing them.
 
 ### Usage troubleshooting
 
@@ -533,8 +814,8 @@ docs/                policy example; PROGRESS.md (development progress) and CHAN
 
 - **`doctor` says an image is missing its `.sha256`**: images must be built with `image/build.sh` (Linux) or `image/build-mac.sh` (Mac), which also write the checksum file.
 - **The model gateway refuses requests**: you are in API-key mode without a key. Set `credentials.llm_gateway.key_ref`, or leave it unset and log in with a subscription inside the guest (see "Network modes and Claude login").
-- **Image build is very slow or times out downloading**: use a mirror, `./image/build.sh --mirror tuna` (see "Build an image"), and set `NPM_REGISTRY` / `CC_MONITOR_REPO` if the npm or GitHub steps are the slow ones.
-- **apt fails with `Unable to connect to 127.0.0.1:...` during an image build**: the host proxy leaked into the guest; see the notes under "Build an image".
+- **Image build is very slow or times out downloading**: use a mirror, `./image/build.sh --mirror tuna` (see "Step 8: Build the images"), and set `NPM_REGISTRY` / `CC_MONITOR_REPO` if the npm or GitHub steps are the slow ones.
+- **apt fails with `Unable to connect to 127.0.0.1:...` during an image build**: the host proxy leaked into the guest; see the notes under "Step 8: Build the images".
 - **Allowlisted domains are denied with `private-or-host-address`**: your DNS returns fake IPs (e.g. `198.18.0.x` from a Clash/TUN fake-ip setup), which the network gate treats as non-public and refuses. Add the allowlisted domains to the proxy's `fake-ip-filter` (or use a resolver that returns real addresses on the host), or set `network.mode: host` so the guest uses the host network, and its proxy/TUN, directly (no allowlist then).
 - **macOS: an image built with an older version hangs at boot** (no console output, one vCPU at 100%), or `apt-get` dies with `Illegal instruction`: the helper attached the sparse raw disk with Virtualization.framework's `.automatic` caching mode, which under memory pressure can hand the guest stale zeros for blocks it just wrote, so files (kernel, shim, libraries) got whole pages of zeros. The helper now uses `.cached` (the same fix as UTM, Lima and apple/container). Rebuild the helper (`make vz-helper`) and the image; `build-mac.sh` also verifies every image with a second, network-less boot (`dpkg --verify` plus the EFI boot files) before writing it.
 - **No `/dev/kvm`**: add your user to the `kvm` group; use `--allow-tcg` only if KVM truly is unavailable, and expect it to be very slow.

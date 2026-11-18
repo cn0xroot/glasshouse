@@ -71,7 +71,7 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 | 策略解析与"只能收紧"、审计哈希链、网络闸门（白名单、DNS 重绑定防护、私网/元数据地址封锁、流量上限）、HTTP 代理、LLM 网关、安全的文件导入导出 | 已实现，有单元测试，`go test -race ./...` 通过 |
 | 会话监督进程（审计 socket、网关/代理监听、清理、审计日志损坏时拒绝启动） | 已实现，用假 hypervisor 做过端到端测试 |
 | QEMU 后端、cloud-init、CLI | 已实现，**已在 Linux/KVM（amd64）上真实启动过** `headless` 和 `desktop`（GNOME）两种镜像，核对过 SSH、文件导入、离线模式、`pull` 审阅、审计哈希链和 CC-Monitor。尚未核对：`glasshouse gui`、真实的模型调用、手改 `audit.jsonl` 的篡改测试，以及 arm64 |
-| `image/build.sh` | 已在 Ubuntu 上端到端跑通（两种档位）；见下文"构建镜像"里的注意事项 |
+| `image/build.sh` | 已在 Ubuntu 上端到端跑通（两种档位）；见下文"第 8 步：构建镜像"里的注意事项 |
 | macOS 后端（`vz-helper/` Swift） | **已在 Apple silicon 上跑通**（macOS 27、Swift 6.4、arm64）。`image/build-mac.sh` 能构建并校验镜像：每个镜像写出前都要从全新的 EFI 变量区启动一次，并通过 `dpkg --verify`。实际跑通了 `glasshouse run --shell` 会话：vsock SSH、文件导入、白名单代理（guest 无网卡）、`network.mode: host`（NAT 网卡，直接用 Mac 的网络）、模型网关转发、CC-Monitor、审计链都正常。`glasshouse run --gui` 会话也已验证：GNOME 桌面（virtio-gpu 上 GDM 自动登录）在 helper 的窗口中正常显示 |
 | CC-Monitor 集成 | hook 已写进镜像。真机已验证：服务在运行，网页界面显示被监控的 Claude Code 会话和它的审计事件（见演示）。上游代码没有逐行审查 |
 
@@ -88,66 +88,219 @@ Vibe coding 就是把键盘交给 AI Agent，让它连续几个小时自己跑�
 
 ## 安装指南
 
-### 环境要求
+按顺序一步一步来，每一步末尾有"检查"，通过了再做下一步。第 1 到 10 步针对 Linux（QEMU/KVM），这是在真机上验证过的平台。Apple 芯片的 Mac 看后面的 [macOS 安装](#macos-安装apple-芯片)。
 
-| 项目 | Linux（QEMU/KVM） | macOS（Virtualization.framework） |
+| 步骤 | 做什么 | 大约耗时 |
 | --- | --- | --- |
-| Go | 见 `go.mod` | 同左 |
-| 虚拟化 | `qemu-system-*`，可读写 `/dev/kvm`（没有 KVM 需加 `--allow-tcg`，非常慢） | Apple silicon（M1 及以后）、macOS 13+、Xcode 命令行工具（Swift）。需原生运行，不能在 Rosetta 下运行 |
-| 其他工具 | `ssh`、`ssh-keygen`，以及做 cloud-init seed 的 ISO 工具（`genisoimage`/`xorriso` 等） | `codesign` |
-| 看桌面 | `virt-viewer`（`remote-viewer`） | 内置窗口 |
-| 构建镜像 | `libguestfs-tools`、`isc-dhcp-client`、`qemu-utils`、`gpgv`、`git`、`curl`、`ubuntu-cloudimage-keyring` | `brew install qemu gnupg`，然后运行 `image/build-mac.sh`（arm64 Ubuntu cloud image） |
+| 1 | 检查机器：CPU、KVM、磁盘、内存、网络 | 2 分钟 |
+| 2 | 安装软件包 | 5 分钟 |
+| 3 | 给当前用户开放 `/dev/kvm` | 1 分钟 |
+| 4 | 获取源码，确认 Go 版本 | 2 分钟 |
+| 5 | 编译并测试 `glasshouse` | 2 到 5 分钟 |
+| 6 | 运行 `glasshouse doctor` | 1 分钟 |
+| 7 | 确定 CC-Monitor 的提交 | 5 分钟（主要是审阅） |
+| 8 | 构建镜像：`headless`，需要桌面再构建 `desktop` | 主要看网络，没有计时 |
+| 9 | 写策略文件：用 API Key 还是订阅账号登录 | 2 分钟 |
+| 10 | 启动第一个会话，做冒烟测试 | 5 分钟 |
 
-Debian/Ubuntu 上一次装齐：
+### 第 1 步：检查机器
+
+| 项目 | 要求 | 检查方法 |
+| --- | --- | --- |
+| 系统和 CPU | x86-64（`amd64`）或 arm64 的 Linux。镜像架构必须与宿主机一致，不做模拟。真机验证过的是 x86-64 | `uname -sm` 输出 `Linux x86_64` |
+| KVM | BIOS 中开启硬件虚拟化，存在 `/dev/kvm`。没有 KVM 就要加 `--allow-tcg`（软件模拟），速度很慢 | `ls -l /dev/kvm` |
+| 磁盘 | `headless` 镜像约 2.2 GB，`desktop` 镜像约 3.6 GB，基础镜像缓存约 0.9 GB，构建时还需要临时空间。建议至少留 15 GB（估计值，没有实测） | `df -h ~/.local/share` |
+| 内存和 CPU | 会话使用策略里的 `vm.cpus` 和 `vm.memory`，构建时 libguestfs 也要占内存。宿主机建议至少 8 GB 内存（估计值） | `free -g`、`nproc` |
+| 网络 | 构建要下载约 800 MB 的基础镜像，以及 apt、npm、git 的数据。国内网络请看第 8 步的镜像源选项 | |
+
+检查：`/dev/kvm` 存在。不存在的话，到 BIOS 中打开 VT-x 或 AMD-V。如果这台机器本身是虚拟机，还要在外层打开嵌套虚拟化。
+
+### 第 2 步：安装软件包
+
+各个包的用途：
+
+| 包 | 用途 |
+| --- | --- |
+| `qemu-system-x86`（arm64 上是 `qemu-system-arm`）、`qemu-utils` | 运行虚拟机，提供 `qemu-img` |
+| `genisoimage`（或 `xorriso`） | 为每个会话生成 cloud-init 种子盘 |
+| `openssh-client` | `glasshouse ssh`、文件传输、monitor 隧道 |
+| `virt-viewer` | 提供 `remote-viewer`，用来显示桌面（只有 `--gui` 需要） |
+| `libguestfs-tools`、`isc-dhcp-client` | 构建镜像用。`virt-customize` 的辅助虚拟机需要 DHCP 客户端才能联网 |
+| `gpgv`、`ubuntu-cloudimage-keyring` | 校验 Canonical 对基础镜像的签名 |
+| `git`、`curl` | 获取 CC-Monitor 和基础镜像 |
+| Go（见 `go.mod`，目前需要 1.24.7 或更高） | 编译 `glasshouse` |
+
+Debian/Ubuntu 上：
 
 ```bash
+sudo apt update
 sudo apt install qemu-system-x86 qemu-utils genisoimage openssh-client virt-viewer \
                  libguestfs-tools isc-dhcp-client gpgv git curl ubuntu-cloudimage-keyring
-sudo usermod -aG kvm "$USER"    # 重新登录后生效
 ```
 
-### 1. 编译与测试
+Go：如果发行版自带的版本低于 `go.mod` 的要求，请从 <https://go.dev/dl/> 下载。`sudo apt install golang-go` 只有在版本够新时才够用。
+
+其他发行版请安装对应的包，目前只在 Ubuntu 上测试过。
+
+检查：
 
 ```bash
-make test        # go vet + go test -race
-make build       # 产物：bin/glasshouse
+qemu-system-x86_64 --version | head -1 && qemu-img --version | head -1 && virt-customize --version && gpgv --version | head -1
+command -v dhclient ssh remote-viewer
+command -v genisoimage || command -v xorriso      # 二者有一个即可
+go version
+```
+
+测试机上的输出（版本号以你的机器为准）：
+
+```text
+QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+qemu-img version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+virt-customize 1.52.0
+gpgv (GnuPG) ...
+/usr/sbin/dhclient
+/usr/bin/ssh
+/usr/bin/remote-viewer
+/usr/bin/xorriso
+go version go1.26.4 linux/amd64
+```
+
+每条命令都应该有输出。`dhclient` 容易漏装：没有它，构建镜像时每次 `apt` 都会报 "Temporary failure resolving"。
+
+### 第 3 步：开放 `/dev/kvm`
+
+```bash
+sudo usermod -aG kvm "$USER"
+```
+
+重新登录（或重启）后，新的组才会生效。如果你一直用 root，这一步可以跳过。
+
+检查：
+
+```bash
+id -nG | tr ' ' '\n' | grep -x kvm            # 输出 kvm（root 用户没有这个组，可以跳过这条）
+test -r /dev/kvm -a -w /dev/kvm && echo ok     # 输出 ok
+ls -l /dev/kvm                                  # crw-rw----+ 1 root kvm 10, 232 ... /dev/kvm
+```
+
+第二条输出 `ok` 才算通过。
+
+### 第 4 步：获取源码
+
+```bash
+git clone https://github.com/cn0xroot/glasshouse.git glasshouse
+cd glasshouse
+go version        # 必须满足 go.mod 中 go 那一行
+```
+
+检查：`ls` 能看到 `Makefile`、`cmd/`、`image/`、`internal/`、`go.mod`。
+
+### 第 5 步：编译并测试
+
+```bash
+make test        # go vet + go test -race ./...，所有包都应显示 ok
+make build       # 生成 bin/glasshouse
+./bin/glasshouse --help
+```
+
+`make test` 的末尾应该是这样（耗时和 `(cached)` 因机器而异），任何一行是 `FAIL` 都不算通过：
+
+```text
+go vet ./...
+go test -race ./...
+ok  	glasshouse/cmd/glasshouse	5.607s
+ok  	glasshouse/internal/audit	(cached)
+?   	glasshouse/internal/backend	[no test files]
+ok  	glasshouse/internal/backend/qemu	1.361s
+...（共 11 个包显示 ok）
+```
+
+`make build` 只打印 `go build -o bin/glasshouse ./cmd/glasshouse`，生成的文件约 11 MB。
+
+可选：把程序装进 `PATH`，`sudo install -m 0755 bin/glasshouse /usr/local/bin/`。本文后面写 `./bin/glasshouse` 或直接写 `glasshouse`，指的是同一个程序。
+
+检查：`bin/glasshouse` 存在，`--help` 列出了 `run`、`ssh`、`gui`、`monitor`、`pull`、`ls`、`logs`、`start`、`stop`、`rm`、`policy`、`doctor`。如果 `make test` 失败，先不要构建镜像，说明当前工具链和预期不一致，需要先排查。
+
+### 第 6 步：运行 `doctor`
+
+```bash
 ./bin/glasshouse doctor
 ```
 
-`doctor` 会检查 ssh、ISO 工具、策略文件、hypervisor 和镜像。第一次运行时镜像一项会失败，这是正常的。
+`doctor` 会检查 `ssh`、`ssh-keygen`、ISO 工具、socket 路径长度、策略文件能否加载、虚拟化后端和镜像。第一次运行时，两项镜像检查会失败，这是正常的，输出大致如下：
 
-### 2. 构建镜像
-
-`image/build.sh` 基于 Canonical 官方云镜像（GPG 验签 + SHA256 校验），装好开发工具和固定提交的 CC-Monitor，输出镜像和 `.sha256`：
-
-```bash
-# CC_MONITOR_REF 必须是已审查过的 40 位提交哈希，脚本不跟踪分支
-CC_MONITOR_REF=<40位提交哈希> ./image/build.sh --profile headless   # 用于 --shell
-CC_MONITOR_REF=<40位提交哈希> ./image/build.sh --profile desktop    # 用于 --gui，带 GNOME 桌面
-# 默认安装最新版 Claude Code；如需覆盖：CLAUDE_CODE_VERSION=stable（或确切的 x.y.z）
-CLAUDE_CODE_VERSION=stable CC_MONITOR_REF=<...> ./image/build.sh --profile headless
+```text
+  ok    ssh
+  ok    ssh-keygen
+  ok    ISO tool (cloud-init seed)
+  ok    socket path length
+  ok    policy loads
+  ok    hypervisor (qemu)
+  FAIL  image ubuntu-26.04-amd64-headless.qcow2 missing checksum file ... (images must be built with image/build.sh)
+  FAIL  image ubuntu-26.04-amd64-desktop.qcow2 missing checksum file ...
+  note  credentials.llm_gateway.key_ref is not set: the model gateway will refuse requests
 ```
 
-参数：`--arch amd64|arm64`（必须与宿主机同架构）、`--profile headless|desktop`、`--format qcow2|raw`。镜像输出到 `$GLASSHOUSE_HOME/images/`。
+检查：除了两条 `image ...`，其余都是 `ok` 或 `note`。如果 `hypervisor`、`ssh` 或 ISO 工具显示 `FAIL`，说明第 2 步或第 3 步没做完。打算用订阅账号登录（第 9 步）的话，那条 `note` 可以忽略。
 
-注意事项：
+### 第 7 步：确定 CC-Monitor 的提交
 
-- **宿主机设置了代理时**：libguestfs 会把代理环境变量带进构建用的 guest，而 guest 里的 `127.0.0.1` 是它自己，apt 会全部失败。脚本已在调用 `virt-customize` 时清掉这些变量；下载基础镜像仍使用你的代理。
-- Claude Code 从 npm 安装（`@anthropic-ai/claude-code`，需要 Node 22 或更新，镜像里的 nodejs 满足）。构建时安装最新版（`latest`），`claude --version` 跑不起来则构建失败；安装的版本记录在镜像内的 `/etc/glasshouse-claude-code-version`。
-- libguestfs 需要 DHCP 客户端（`isc-dhcp-client`）才能让构建用的 guest 联网，没有它所有 apt 调用都会报 "Temporary failure resolving"。脚本会先检查 `dhclient`。
-- 装包前会**原地**扩大根分区。这里不能用 `virt-resize`：它会重排并移动分区，破坏 GRUB 的 BIOS 引导记录（虚拟机会卡在 "Booting from Hard Disk..."）。
-- CC-Monitor 的 npm 依赖在其仓库的 `webui/` 子目录，脚本里已按此处理（`npm ci --omit=dev`），失败会让构建失败。可用 `CC_MONITOR_SETUP_CMD` 覆盖。
-- 构建需要联网，基础镜像约 800 MB，缓存在 `$GLASSHOUSE_HOME/cache/`。
-- **国内镜像源。** `--mirror auto|official|tuna|ustc`（或环境变量 `GLASSHOUSE_MIRROR`）决定云镜像和构建用 guest 的 APT 包从哪里下载：
+镜像里预装了 [CC-Monitor](https://github.com/cn0xroot/CC-Monitor)，用来监控 guest 里的 Claude Code。它是运行在你虚拟机里的第三方代码，所以构建脚本不接受分支名，只接受完整的 40 位提交哈希。请先看过这个提交的内容再使用：
+
+```bash
+git ls-remote https://github.com/cn0xroot/CC-Monitor.git HEAD     # 查看当前提交
+git clone https://github.com/cn0xroot/CC-Monitor.git /tmp/cc-monitor-review
+git -C /tmp/cc-monitor-review log --oneline -5                     # 看最近的改动
+export CC_MONITOR_REF=<你审阅过的 40 位提交哈希>
+```
+
+测试机用的提交是 `1b3516f5b5152f882daad6e6d5c2506bf166a35a`。本项目没有逐行审阅过上游代码，是否审阅由你决定。
+
+检查：`echo "$CC_MONITOR_REF" | grep -Eq '^[0-9a-f]{40}$' && echo ok` 输出 `ok`。
+
+### 第 8 步：构建镜像
+
+`image/build.sh` 以 Canonical 官方 cloud image 为基础（GPG 验签加 SHA256 校验），安装开发工具、最新版 Claude Code、ccstatusline 和固定提交的 CC-Monitor，最后写出镜像和对应的 `.sha256` 文件。脚本没有可执行权限，用 `bash` 运行：
+
+```bash
+# 8a. 轻量镜像，给 --shell 用。先构建这个，体积更小
+bash ./image/build.sh --profile headless
+
+# 8b. 桌面镜像（GNOME），给 --gui 用，需要桌面时再构建
+bash ./image/build.sh --profile desktop
+```
+
+`CC_MONITOR_REF` 取自第 7 步导出的环境变量。国内网络加上 `--mirror tuna`（或 `ustc`，也可以保持默认的 `auto`），详见下面的"构建说明"。要固定 Claude Code 版本：`CLAUDE_CODE_VERSION=stable bash ./image/build.sh --profile headless`，也可以写确切的 `x.y.z`。
+
+构建过程依次是：选择镜像源、校验 Canonical 签名、下载基础镜像（约 800 MB，之后走缓存）、克隆 CC-Monitor 并校验哈希、扩大根分区、`virt-customize` 阶段（apt、Node、Claude Code、CC-Monitor）、清理，最后写出压缩后的镜像。构建耗时没有计时，主要花在下载和 apt、npm 上。可以重复运行：镜像先写到临时文件，完整后才改名，构建失败不会留下损坏的镜像。
+
+参数：`--arch amd64|arm64`（必须与宿主机一致）、`--profile headless|desktop`、`--format qcow2|raw`、`--mirror auto|official|tuna|ustc`、`--keep-mirror`。镜像输出到 `$GLASSHOUSE_HOME/images/`，默认是 `~/.local/share/glasshouse/images/`。
+
+检查：
+
+```bash
+ls -lh ~/.local/share/glasshouse/images/
+(cd ~/.local/share/glasshouse/images && sha256sum -c ubuntu-26.04-amd64-headless.qcow2.sha256)
+./bin/glasshouse doctor      # 镜像那几行应该变成 ok
+```
+
+测试机上生成的文件是 `ubuntu-26.04-amd64-headless.qcow2`（2.2 GB）和 `ubuntu-26.04-amd64-desktop.qcow2`（3.6 GB）。
+
+#### 构建说明
+
+- Claude Code 通过 npm 安装（包名 `@anthropic-ai/claude-code`，需要 Node 22 或更高，镜像自带的版本满足要求）。默认装最新版，装完后 `claude --version` 不能运行就判定构建失败。实际装上的版本记录在镜像内的 `/etc/glasshouse-claude-code-version`。
+- CC-Monitor 的 npm 依赖在它仓库的 `webui/` 子目录下，脚本会在那里执行 `npm ci --omit=dev`，失败则构建失败。可以用 `CC_MONITOR_SETUP_CMD` 替换这条命令。
+- 基础镜像约 800 MB，缓存在 `$GLASSHOUSE_HOME/cache/`，再次构建不会重新下载。
+- 国内镜像源：`--mirror auto|official|tuna|ustc`（或环境变量 `GLASSHOUSE_MIRROR`）决定 cloud image 和构建用 guest 的 APT 包从哪里下载：
 
   ```bash
-  ./image/build.sh --profile headless                  # auto：探测官方、清华（tuna）、中科大（ustc）
-  ./image/build.sh --profile headless --mirror tuna    # 强制清华
-  ./image/build.sh --profile headless --mirror ustc    # 强制中科大
+  bash ./image/build.sh --profile headless                  # auto：探测官方、清华（tuna）、中科大（ustc）
+  bash ./image/build.sh --profile headless --mirror tuna    # 指定清华
+  bash ./image/build.sh --profile headless --mirror ustc    # 指定中科大
   ```
 
-  `auto` 默认用 Canonical 官方服务器，只有官方不通、或者某个镜像至少快一倍时才换镜像，会打印测得的耗时，下载失败时自动换下一个源。镜像文件**始终**用 Canonical 的 GPG 签名 `SHA256SUMS` 校验，apt 也会验证自己的签名，所以不需要信任镜像站。guest 的 APT 源只在构建期间指向镜像，结束时恢复成官方源，这样 `network.allow`（里面写的是 `archive.ubuntu.com`）仍然有效；`--keep-mirror` 会把镜像留在镜像里，这时请把镜像站的域名加进 `network.allow`（或使用 `network.mode: host`）。注意：中科大在部分网络下拒绝镜像文件下载（HTTP 403），所以 `auto` 会回退；两个镜像站提供的是 `resolute/current`，和官方的 `releases/26.04/release` 是同一个镜像（核对时校验和一致）。
-  其他可选环境变量：`APT_MIRROR=https://host/ubuntu`（任意 APT 镜像）、`NPM_REGISTRY=https://registry.npmmirror.com`（CC-Monitor 依赖和 Claude Code 用的 npm 源）、`CC_MONITOR_REPO=<https 的 git 地址>`（GitHub 镜像；固定的提交哈希仍然会校验）。在国内 GitHub 和 npm 往往是最慢的步骤，选中镜像时脚本会打印提示。
+  `auto` 默认使用 Canonical 官方服务器，只有官方连不上，或者某个镜像站至少快一倍时才切换，并打印测得的耗时。下载失败时自动换下一个源。无论从哪里下载，镜像文件都要用 Canonical 签名的 `SHA256SUMS` 校验，apt 也会校验自己的签名，所以不需要信任镜像站。guest 的 APT 源只在构建期间指向镜像站，结束时改回官方源，因此 `network.allow`（其中是 `archive.ubuntu.com`）仍然有效。如果加了 `--keep-mirror`，镜像站的地址会留在镜像里，这时要把镜像站域名加进 `network.allow`，或者使用 `network.mode: host`。另外，中科大在部分网络下会拒绝镜像下载（HTTP 403），`auto` 因此会回退到别的源。两个镜像站提供的是 `resolute/current`，与官方 `releases/26.04/release` 是同一个镜像，核对时校验和一致。
+  其他可选环境变量：`APT_MIRROR=https://host/ubuntu`（任意 APT 镜像）、`NPM_REGISTRY=https://registry.npmmirror.com`（CC-Monitor 依赖和 Claude Code 使用的 npm 源）、`CC_MONITOR_REPO=<https 的 git 地址>`（GitHub 镜像，固定的提交哈希照样校验）。在国内，GitHub 和 npm 往往是最慢的两步，选用镜像站时脚本会打印提示。
 
 #### 构建流程
 
@@ -198,32 +351,26 @@ flowchart TD
 
 会话启动时 hooks 已经在镜像里；`monitor.cc_monitor: false` 的会话会删除 `/etc/claude-code/managed-settings.json`；如果镜像是没有 hooks 的旧版本，会话会兜底把 hooks 装上（见 `internal/cloudinit`）。
 
-### 3. macOS
+#### 构建失败怎么办
 
-Apple silicon（M1–M5）的 Mac 只能运行 **arm64** guest：Virtualization.framework 不做 CPU 模拟。
-所以镜像基于 Canonical 官方的 Ubuntu 26.04 **arm64** cloud image（`ubuntu-26.04-server-cloudimg-arm64.img`）构建。
-用 cloud image 而不用 live-server 安装 ISO，是因为 cloud image 本身就是装好的 Ubuntu，可以直接用 cloud-init 配置。
+| 现象 | 原因和处理 |
+| --- | --- |
+| 提示 `missing tool: virt-customize` 之类 | 第 2 步没装全 |
+| 每次 `apt` 都报 "Temporary failure resolving" | 缺 `isc-dhcp-client`：libguestfs 需要 DHCP 客户端才能让构建用的 guest 联网，脚本开头会检查 `dhclient` |
+| `supermin: failed to read kernel`，或读不了 `/boot/vmlinuz-*` | Ubuntu 上 libguestfs 的已知问题，内核文件只有 root 能读。执行 `sudo chmod +r /boot/vmlinuz-*`。测试机以 root 构建，没有遇到过 |
+| `CC_MONITOR_REF must be a full 40-character commit hash` | 第 7 步给的是分支名或短哈希 |
+| 基础镜像下载很慢、卡住或返回 403 | 改用 `--mirror tuna` 或 `--mirror ustc`。无论从哪里下载，签名校验都照常进行 |
+| npm 或 GitHub 步骤很慢 | 设置 `NPM_REGISTRY=https://registry.npmmirror.com`、`CC_MONITOR_REPO=<GitHub 镜像地址>` |
+| 宿主机用了代理，`apt` 报 `Unable to connect to 127.0.0.1:...` | libguestfs 会把代理变量带进 guest，而 guest 里的 `127.0.0.1` 是它自己。脚本已在调用 `virt-customize` 时清掉这些变量，基础镜像的下载仍走你的代理 |
+| 新镜像启动时卡在 "Booting from Hard Disk..." | `virt-resize` 会重排并移动分区，破坏 GRUB 的 BIOS 引导记录。`build.sh` 是原地扩大根分区的，不要改用 `virt-resize` |
 
-```bash
-brew install qemu gnupg            # qemu-img（qcow2 -> raw）和 gpg/gpgv（校验 Canonical 签名）
-make                               # 在 Mac 上：编译 bin/glasshouse 和已签名的 bin/glasshouse-vz，均为原生 arm64
-CC_MONITOR_REF=<40 位提交哈希> ./image/build-mac.sh --profile headless   # 也可以用 --profile desktop
-./bin/glasshouse doctor
-```
+### 第 9 步：写策略文件
 
-`image/build-mac.sh` 会下载 arm64 cloud image，并用 Canonical 的密钥校验签名。然后在构建 VM 里启动一次：用的是同一个
-helper，另外加一块只有镜像构建才会有的 NAT 网卡。在 guest 里安装和 `build.sh` 相同的软件（`image/provision-guest.sh`），
-清理 guest 后关机。产物是 `~/.local/share/glasshouse/images/ubuntu-26.04-arm64-<profile>.raw` 及其 `.sha256`。
-也可以继续在 arm64 Linux 上用 `./image/build.sh --format raw` 构建，再拷到 Mac 上。
+没有策略文件时使用内置默认值：白名单网络，没有模型 Key。Claude Code 的认证方式二选一。
 
-`glasshouse doctor` 和启动前的预检在 Mac 上会检查：
-- helper 是原生的、能启动，并带有 `com.apple.security.virtualization` entitlement 签名；
-- glasshouse 没有运行在 Rosetta 下；
-- `vm.cpus`、`vm.memory` 没有超过本机允许的上限；
-- 数据目录在 APFS 卷上；
-- 会话的 unix socket 路径不超过 macOS 的 104 字节限制（`GLASSHOUSE_HOME` 太长会在这里报错）。
+方式 A：订阅账号登录（不用 API Key）。什么都不用做，或者写一个不含 `key_ref` 的策略。默认白名单已经包含 `claude.ai`、`platform.claude.com` 和 `api.anthropic.com`。第一次在 guest 里运行 `claude` 时登录，详见[网络模式与 Claude 登录](#网络模式与-claude-登录)。`doctor` 会输出一条关于 `key_ref` 的 `note`，这是正常的。
 
-### 4. 配置模型 Key
+方式 B：通过模型网关使用 API Key（真正的 Key 留在宿主机上）：
 
 ```bash
 mkdir -p ~/.config/glasshouse && cat > ~/.config/glasshouse/policy.yaml <<'YAML'
@@ -234,6 +381,124 @@ credentials:
 YAML
 ./bin/glasshouse policy check
 ```
+
+`key_ref` 支持的写法：`env:NAME`（环境变量，Linux 上最简单）、`secret-service:NAME`（桌面密钥环）、`keychain:NAME`（macOS 钥匙串）、`file:/path`（只有你自己能读的文件）。
+
+检查：`./bin/glasshouse policy check` 没有报错。各项设置的说明见[策略配置](#策略配置)。
+
+### 第 10 步：第一个会话和冒烟测试
+
+```bash
+mkdir -p ~/glasshouse-demo && echo "hello from the host" > ~/glasshouse-demo/hello.txt
+./bin/glasshouse run --shell ~/glasshouse-demo
+```
+
+首次启动需要一两分钟，`run` 最多等待 6 分钟。启动后你会以 `agent` 用户进入 `/workspace` 下的 shell。在 guest 里执行：
+
+```bash
+pwd                  # /workspace
+whoami               # agent
+cat hello.txt        # hello from the host（项目已经复制进来了）
+claude --version     # 镜像里预装的 Claude Code
+echo "made in the guest" > result.txt
+exit                 # 退出 shell 不会停止虚拟机
+```
+
+回到宿主机：
+
+```bash
+./bin/glasshouse ls                     # 会话状态是 ready
+./bin/glasshouse pull                   # 列出 result.txt（added），回答 y 才会写入 ~/glasshouse-demo
+cat ~/glasshouse-demo/result.txt
+./bin/glasshouse logs --verify          # 审计哈希链应校验通过
+./bin/glasshouse stop                   # 没带 --keep 时，会话磁盘会被删除
+```
+
+要顺便验证隔离，可以做两个测试：`./bin/glasshouse run --shell --offline` 启动后，在 guest 里 `curl -sS -m 8 https://example.com` 必须失败；默认白名单模式下，`curl -sS -m 8 http://169.254.169.254` 必须被拒绝，`glasshouse logs` 里能看到 `net.deny`。
+
+预期输出（会话 ID 每次不同；这里用 `pull --yes` 代替交互回答 `y`）：
+
+```text
+session s-9c9e2d starting (first boot can take a minute or two)...
+imported 1 files (20B) into /workspace
+session s-9c9e2d ready
+/workspace
+agent
+hello from the host
+2.1.326 (Claude Code)
+...
+1 change(s) from the guest (2 files received, 0 skipped):
+  added     result.txt
+applied
+audit log OK: 5 records, chain intact
+session s-9c9e2d stopped
+```
+
+`network.mode: host` 时启动前还会打印一段 `warning: network.mode=host ...`，这是正常的。
+
+检查：`result.txt` 是在你对 `pull` 的审阅回答 `y` 之后才出现在宿主机上的，并且 `logs --verify` 通过。完整流程就是：`run`、干活、`pull`、`logs --verify`、`stop`。
+
+可选：桌面。需要第 8b 步构建的 `desktop` 镜像和 `remote-viewer`：
+
+```bash
+./bin/glasshouse run --gui ~/glasshouse-demo      # 就绪后自动打开桌面窗口
+./bin/glasshouse gui                              # 之后重新打开窗口
+```
+
+桌面要求输入密码时，见[使用中的常见问题](#使用中的常见问题)。想让桌面数据在重启后保留，用 `start.sh`，见 [`start.sh`](#startsh数据保留的桌面虚拟机)。
+
+### 更新和卸载
+
+- 更新程序：`git pull && make test && make build`。
+- 更新镜像（比如换成更新的 Claude Code）：重新执行第 8 步。正在运行的会话不受影响。但用 `--keep` 保留的会话叠加在旧镜像上，镜像重建后无法再启动。先用 `pull` 取出需要的内容，再 `glasshouse rm` 删除它。
+- 删除会话：`glasshouse rm <会话>`。
+- 全部清理：先停掉所有会话，再删除 `$GLASSHOUSE_HOME`（默认 `~/.local/share/glasshouse`，里面有镜像、下载缓存、会话和审计日志，需要审计日志的话先复制出来）和 `~/.config/glasshouse`。
+
+### macOS 安装（Apple 芯片）
+
+Apple 芯片（M1 到 M5）的 Mac 只能运行 arm64 guest，Virtualization.framework 不做 CPU 模拟，所以上面 Linux 步骤里的 x86-64 镜像用不了。镜像基于 Canonical 官方的 Ubuntu 26.04 arm64 cloud image（`ubuntu-26.04-server-cloudimg-arm64.img`）构建，没有用 live-server ISO，因为 cloud image 本身就是装好的 Ubuntu，cloud-init 可以直接配置。这条路径由项目所有者在 Apple 芯片的 Mac 上验证过，本仓库所在的 Linux 机器无法复核。
+
+Mac 第 1 步：检查 Mac。需要 macOS 13 或更高版本、Apple 芯片（`uname -m` 输出 `arm64`）。使用原生终端，不要用 Rosetta 下的终端，`sysctl -n sysctl.proc_translated` 必须输出 `0`。数据目录要在 APFS 上，建议留 15 GB 空间（估计值）。
+
+Mac 第 2 步：安装工具。
+
+```bash
+xcode-select --install             # Swift 和 codesign，已安装则跳过
+brew install go qemu gnupg         # Go；qemu-img（qcow2 转 raw）；gpg/gpgv（校验 Canonical 签名）
+```
+
+检查：`swift --version`、`go version`、`qemu-img --version`、`gpgv --version | head -1`、`command -v codesign` 都有输出，且 `go version` 显示 `darwin/arm64`。
+
+Mac 第 3 步：获取源码并编译。
+
+```bash
+git clone https://github.com/cn0xroot/glasshouse.git glasshouse && cd glasshouse
+make                               # 在 Mac 上同时编译 bin/glasshouse 和已签名的 bin/glasshouse-vz，均为原生 arm64
+```
+
+不要分开编译这两个文件。`make` 保证两者版本配套，在 Rosetta 下会拒绝运行，结束时还会执行 `bin/glasshouse-vz check`。检查：`bin/glasshouse` 和 `bin/glasshouse-vz` 都存在，`file bin/glasshouse` 显示 `arm64`。
+
+Mac 第 4 步：确定 CC-Monitor 的提交。和 Linux 的[第 7 步](#第-7-步确定-cc-monitor-的提交)相同：审阅 CC-Monitor 的某个提交，然后 `export CC_MONITOR_REF=<40 位提交哈希>`。
+
+Mac 第 5 步：构建镜像。
+
+```bash
+./image/build-mac.sh --profile headless     # 也可以用 --profile desktop，或两个都构建
+```
+
+脚本先下载 arm64 cloud image，并用 Canonical 的密钥校验。然后在构建虚拟机里启动一次：用的是同一个 helper，另外加了一块只有镜像构建才有的 NAT 网卡。guest 里会安装与 `build.sh` 相同的软件（`image/provision-guest.sh`），清理后关机。最后在没有网络的条件下再启动一次，执行 `dpkg --verify` 并检查 EFI 引导文件，没通过的镜像不会写出。构建超过 5400 秒（`BUILD_TIMEOUT`）会放弃，`--cpus` 和 `--memory` 用来设置构建虚拟机的规格。镜像源选项和可选环境变量与 Linux 相同。
+
+产物是 `~/.local/share/glasshouse/images/ubuntu-26.04-arm64-<profile>.raw` 及其 `.sha256`。也可以在 arm64 Linux 机器上用 `./image/build.sh --format raw` 构建，再把这两个文件拷到 Mac 上。
+
+Mac 第 6 步：用 `doctor` 检查。
+
+```bash
+./bin/glasshouse doctor
+```
+
+在 Mac 上，它还会检查：helper 是否为原生程序、能否启动、是否带有 `com.apple.security.virtualization` entitlement 签名；glasshouse 是否在 Rosetta 下运行；`vm.cpus`、`vm.memory` 是否在本机允许的上限内；数据目录是否在 APFS 上；会话的 unix socket 路径是否不超过 macOS 的 104 字节限制（`GLASSHOUSE_HOME` 太长会在这里报错）。
+
+Mac 第 7 步：策略和第一个会话。按 Linux 的[第 9 步](#第-9-步写策略文件)写策略（Mac 上 `key_ref` 一般用 `keychain:NAME`），再按 Linux 的[第 10 步](#第-10-步第一个会话和冒烟测试)做冒烟测试。macOS 上 `network.mode: host` 使用的是 NAT 网卡，不是 QEMU 的 user-mode 网络，宿主机地址是 NAT 网关，通常是 `192.168.64.1`。
 
 ## 使用方法
 
@@ -354,6 +619,24 @@ glasshouse ls
 glasshouse ssh s-1a2b3c
 glasshouse stop s-1a2b3c
 ```
+
+### 向虚拟机传文件（物理机 → 虚拟机）
+
+`glasshouse run <目录>` 只在启动时把项目打包进 `/workspace`。之后想再传单个文件（数据集、安装包、模型），可以在物理机上用 Python 起一个 Web 服务，让虚拟机里下载。虚拟机访问物理机的地址是 **`10.0.2.2`**（QEMU 给宿主机的固定地址，Linux/QEMU 后端）。
+
+```bash
+# 1. 物理机：把一个目录作为 Web 服务（只暴露这个目录）
+cd ~/share && python3 -m http.server 8000 --bind 127.0.0.1
+
+# 2. 虚拟机里（glasshouse ssh，或桌面终端）
+curl -fO http://10.0.2.2:8000/data.zip        # 或：wget http://10.0.2.2:8000/data.zip
+```
+
+- **只有 `network.mode: host` 才能用**（见[网络模式](#网络模式与-claude-登录)）。`allowlist` 和 `offline` 故意不让访问宿主机（私网地址被拦，QEMU 启动时带了 `restrict=on`），请求会失败：实测代理返回 `403`，直连没有响应。
+- 绑定 `127.0.0.1` 就够了，QEMU 会把 `10.0.2.2` 转到宿主机的回环地址。不要绑定 `0.0.0.0`，除非你想让局域网里的其他机器也能下载这些文件。
+- `host` 模式下虚拟机能访问宿主机能访问的一切，所以只共享专门的目录，不要共享 `$HOME`，传完用 `Ctrl+C` 关掉服务。
+- 在 Linux x86 上验证过（host 模式，`--shell` 会话里 `curl` 和 `wget` 都从宿主机服务下载成功）。**macOS 没有验证**：那里宿主机是 NAT 网关，通常是 `192.168.64.1`（见上面的表），所以用 `http://192.168.64.1:8000/...`，服务绑定到 `0.0.0.0` 或该地址。
+- 反方向（虚拟机 → 物理机）用 `glasshouse pull`，写回前会先审阅改动。
 
 ### 使用中的常见问题
 
@@ -532,8 +815,8 @@ docs/                策略示例；PROGRESS.md（开发进度）和 CHANGELOG.m
 
 - **`doctor` 报镜像缺少 `.sha256`**：镜像必须由 `image/build.sh`（Linux）或 `image/build-mac.sh`（Mac）构建，它们会同时生成校验文件。
 - **模型网关拒绝请求**：处于 API Key 模式却没有 Key。请设置 `credentials.llm_gateway.key_ref`，或者保持不设置，在 guest 里用订阅账号登录（见"网络模式与 Claude 登录"）。
-- **构建镜像下载很慢或超时**：使用镜像源，`./image/build.sh --mirror tuna`（见"构建镜像"），npm 或 GitHub 步骤慢的话再设置 `NPM_REGISTRY` / `CC_MONITOR_REPO`。
-- **构建镜像时 apt 报 `Unable to connect to 127.0.0.1:...`**：宿主机代理被带进了 guest，见上文"构建镜像"的注意事项。
+- **构建镜像下载很慢或超时**：使用镜像源，`./image/build.sh --mirror tuna`（见"第 8 步：构建镜像"），npm 或 GitHub 步骤慢的话再设置 `NPM_REGISTRY` / `CC_MONITOR_REPO`。
+- **构建镜像时 apt 报 `Unable to connect to 127.0.0.1:...`**：宿主机代理被带进了 guest，见上文"第 8 步：构建镜像"的注意事项。
 - **白名单内的域名被拒，原因是 `private-or-host-address`**：你的 DNS 返回的是假 IP（例如 Clash/TUN fake-ip 方案的 `198.18.0.x`），网络闸门把它当作非公网地址拒绝。可以把白名单域名加进代理的 `fake-ip-filter`（或者让宿主机使用返回真实地址的解析器），也可以设置 `network.mode: host`，让 guest 直接使用宿主机网络及其代理/TUN（这样就没有白名单了）。
 - **macOS：用旧版本构建的镜像启动时卡住**（控制台没有任何输出，一个 vCPU 占满 100%），或者 `apt-get` 报 `Illegal instruction` 崩溃：helper 挂载稀疏 raw 磁盘时用的是 Virtualization.framework 的 `.automatic` 缓存模式，内存吃紧时 guest 可能对刚写入的块读回陈旧的全 0，导致内核、shim、库文件出现整页的 0。helper 现在改用 `.cached`（UTM、Lima、apple/container 也是这么修的）。重新编译 helper（`make vz-helper`）并重建镜像即可；`build-mac.sh` 写出每个镜像前，还会用一次无网络的启动来校验（`dpkg --verify` 加 EFI 引导文件）。
 - **没有 `/dev/kvm`**：把用户加进 `kvm` 组；确实没有时才用 `--allow-tcg`，速度极慢。
