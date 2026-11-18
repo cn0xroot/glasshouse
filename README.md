@@ -4,7 +4,7 @@ English | [简体中文](./README.zh-CN.md)
 
 Run AI agents inside a hardware-virtualized Ubuntu 26.04 LTS virtual machine, so they cannot reach your host's files, credentials or internal network. QEMU/KVM on Linux, Virtualization.framework on macOS.
 
-Full usage manual: [`USAGE.md`](./USAGE.md) (English) · [`USAGE.zh-CN.md`](./USAGE.zh-CN.md) (中文): starting, changing the configuration, adding CPU and memory, persistence, troubleshooting.
+Full usage manual: [`USAGE.md`](./USAGE.md) (English) · [`USAGE.zh-CN.md`](./USAGE.zh-CN.md) (中文): starting, changing the configuration, adding CPU and memory, persistence, troubleshooting. Release notes: [`CHANGELOG.md`](./CHANGELOG.md) (English) · [`CHANGELOG.zh-CN.md`](./CHANGELOG.zh-CN.md) (中文).
 
 ## Glasshouse AI SandBox for Vibe-coding
 

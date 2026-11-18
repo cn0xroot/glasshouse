@@ -4,7 +4,7 @@
 
 在硬件虚拟化的 Ubuntu 26.04 LTS 虚拟机里运行 AI Agent，让它碰不到宿主机的文件、凭证和内网。Linux 用 QEMU/KVM，macOS 用 Virtualization.framework。
 
-完整使用手册：[`USAGE.zh-CN.md`](./USAGE.zh-CN.md)（中文）· [`USAGE.md`](./USAGE.md)（English），涵盖启动、修改配置、增加 CPU 和内存、数据保留、排错。
+完整使用手册：[`USAGE.zh-CN.md`](./USAGE.zh-CN.md)（中文）· [`USAGE.md`](./USAGE.md)（English），涵盖启动、修改配置、增加 CPU 和内存、数据保留、排错。版本更新记录：[`CHANGELOG.zh-CN.md`](./CHANGELOG.zh-CN.md)（中文）· [`CHANGELOG.md`](./CHANGELOG.md)（English）。
 
 ## Glasshouse AI SandBox for Vibe-coding
 
