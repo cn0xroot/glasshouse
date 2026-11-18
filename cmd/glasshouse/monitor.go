@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -67,9 +69,10 @@ func cmdMonitor(args []string) error {
 	if err != nil {
 		return err
 	}
+	tunnelDone := waitCmd(tunnel) // the only Wait on the tunnel: two concurrent Waits can block each other forever
 	defer func() {
 		_ = tunnel.Process.Kill()
-		_ = tunnel.Wait()
+		<-tunnelDone
 		_ = os.Remove(sock)
 	}()
 	if err := waitForFile(sock, 15*time.Second); err != nil {
@@ -145,7 +148,7 @@ func cmdMonitor(args []string) error {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	select {
 	case <-sig:
-	case err := <-waitCmd(tunnel):
+	case err := <-tunnelDone:
 		return fmt.Errorf("tunnel closed: %v", err)
 	}
 	return nil
@@ -159,16 +162,43 @@ func startTunnel(be backend.Backend, spec backend.Spec, sock string) (*exec.Cmd,
 	opts := append([]string{}, argv[1:len(argv)-1]...)
 	opts = append(opts, "-N", "-o", "ExitOnForwardFailure=yes", "-L", sock+":127.0.0.1:9999", last)
 	cmd := exec.Command(argv[0], opts...)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = tunnelStderr(runtime.GOOS)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	return cmd, nil
 }
 
+// tunnelStderr is where the tunnel's ssh writes its diagnostics. On Linux that is our own stderr, as a plain file:
+// no copying goroutine, nothing to wait for. macOS ssh logs a harmless "setsockopt TCP_NODELAY" error for every
+// forwarded unix-socket connection, so there the output goes through a filter that drops those lines.
+func tunnelStderr(goos string) io.Writer {
+	if goos != "darwin" {
+		return os.Stderr
+	}
+	pr, pw := io.Pipe()
+	go filterTunnelStderr(pr, os.Stderr)
+	return pw
+}
+
+// filterTunnelStderr copies r to w line by line, without the TCP_NODELAY noise. It never stops reading early, so
+// a writer (ssh, through exec's copying goroutine) is never left blocked.
+func filterTunnelStderr(r io.Reader, w io.Writer) {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		if !strings.Contains(sc.Text(), "setsockopt TCP_NODELAY") {
+			fmt.Fprintln(w, sc.Text())
+		}
+	}
+	_, _ = io.Copy(io.Discard, r) // a line longer than the buffer ends the scan: keep draining
+}
+
+// waitCmd waits for c exactly once. The returned channel delivers the result to the first receiver and is then
+// closed, so any later receiver returns at once instead of blocking.
 func waitCmd(c *exec.Cmd) <-chan error {
 	ch := make(chan error, 1)
-	go func() { ch <- c.Wait() }()
+	go func() { ch <- c.Wait(); close(ch) }()
 	return ch
 }
 

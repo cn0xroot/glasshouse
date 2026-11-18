@@ -4,6 +4,12 @@ English | [简体中文](./CHANGELOG.zh-CN.md)
 
 What changed per version, as a user would notice it. Every item says how far it was checked: **verified** means it was run on a real machine, **not verified** means only the code was written or only unit tests exist. The step-by-step code change log is the local note `docs/CHANGELOG.md` (listed in `.gitignore`, not in the repository).
 
+## Unreleased (after V0.2)
+
+- **Fixed: `glasshouse monitor` timed out when `~/.ssh/config` enables `ControlMaster`.** Every session uses the same host alias `glasshouse` (macOS backend), so ssh reused another session's master and the `monitor.sock` forward never appeared. All ssh calls now carry `-o ControlMaster=no -o ControlPath=none`. (From the Mac-side patch.) On Linux, `ssh -G` showed that the command-line options override `ControlMaster auto` in the config file; a real master collision was not reproduced because Linux sessions have different ports.
+- **macOS:** the tunnel's ssh prints a harmless `setsockopt TCP_NODELAY` error for every forwarded connection; it is filtered out on macOS only. **Linux is unchanged** (ssh's stderr goes straight to a file).
+- **Fixed: a possible hang on exit.** The patch first turned ssh's stderr into an `io.Pipe`; on exit, `waitCmd`'s goroutine and the cleanup `defer` then both called `Wait` on the tunnel and could block each other forever over the same "copy finished" signal. Reproduced in isolation: 5 hangs in 300 runs with a pipe, 0 with a file. The tunnel is now waited for once, and the result goes to every receiver through a channel that is closed afterwards.
+
 ## V0.2 (2026-11-17, tag `V0.2`)
 
 On top of `V0.1`; main commits `3f8429f` and `5f3716d`. Main points: support for Macs with Apple silicon, and a fix for a race that V0.1 already had.

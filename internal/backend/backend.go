@@ -118,5 +118,9 @@ func BaseSSHOptions(keyPath string) []string {
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
 		"-o", "ServerAliveInterval=15",
+		// Every session's host alias is the same, so a user's ControlMaster
+		// config could attach to another session's master; never multiplex.
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
 	}
 }
