@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glasshouse</title>
+<style>
+/* Colour themes and font stacks follow CC-Monitor's (same author, MIT), so the two UIs look alike. */
+:root{--bg:#f5f6f8;--bg-panel:#ffffff;--bg-elevated:#eef0f4;--border:#d8dce4;--text:#1c2029;--text-dim:#6b7280;--accent:#2f6fed;--red:#d6304a;--yellow:#b3790a;--green:#1f8f5f;--on-accent:#ffffff;
+ --app-font:"Inter",-apple-system,"Segoe UI","Helvetica Neue",Arial,"LXGW WenKai","霞鹜文楷","楷体","STKaiti","Kaiti SC",KaiTi,"AR PL UKai CN",sans-serif;--app-size:14px;
+ --card:var(--bg-panel);--line:var(--border);--fg:var(--text);--mut:var(--text-dim);--acc:var(--accent);--ok:var(--green);--bad:var(--red);--warn:var(--yellow);--code:var(--bg-elevated)}
+@media (prefers-color-scheme:dark){:root:not([data-theme]){--bg:#0f1115;--bg-panel:#151822;--bg-elevated:#1c202c;--border:#262b3a;--text:#d8dce6;--text-dim:#7a8094;--accent:#4f8cff;--red:#ff5f6d;--yellow:#e6b450;--green:#4fd18b;color-scheme:dark}}
+:root[data-theme="light"]{--bg:#f5f6f8;--bg-panel:#ffffff;--bg-elevated:#eef0f4;--border:#d8dce4;--text:#1c2029;--text-dim:#6b7280;--accent:#2f6fed;--red:#d6304a;--yellow:#b3790a;--green:#1f8f5f}
+:root[data-theme="dark"]{--bg:#0f1115;--bg-panel:#151822;--bg-elevated:#1c202c;--border:#262b3a;--text:#d8dce6;--text-dim:#7a8094;--accent:#4f8cff;--red:#ff5f6d;--yellow:#e6b450;--green:#4fd18b;color-scheme:dark}
+:root[data-theme="brand"]{--bg:#f4f0f1;--bg-panel:#f9f5e6;--bg-elevated:#ffffff;--border:#c1d3da;--text:#201f3a;--text-dim:#6b6f8a;--accent:#4757e8;--red:#ec5615;--yellow:#ff9d43;--green:#10c378}
+:root[data-theme="dracula"]{--bg:#191a21;--bg-panel:#21222c;--bg-elevated:#2b2d3a;--border:#3c3f52;--text:#f8f8f2;--text-dim:#9a9cb0;--accent:#bd93f9;--red:#ff5555;--yellow:#f1fa8c;--green:#50fa7b;color-scheme:dark}
+:root[data-theme="nord"]{--bg:#2e3440;--bg-panel:#3b4252;--bg-elevated:#434c5e;--border:#4c566a;--text:#eceff4;--text-dim:#9aa5b8;--accent:#88c0d0;--red:#bf616a;--yellow:#ebcb8b;--green:#a3be8c;--on-accent:#1c2029;color-scheme:dark}
+:root[data-theme="midnight"]{--bg:#07080f;--bg-panel:#0d1117;--bg-elevated:#111827;--border:#1e2a3a;--text:#f1f5f9;--text-dim:#64748b;--accent:#6366f1;--red:#f87171;--yellow:#f59e0b;--green:#10b981;color-scheme:dark}
+:root[data-theme="ocean"]{--bg:#060d14;--bg-panel:#091825;--bg-elevated:#0d2035;--border:#163550;--text:#e0f2fe;--text-dim:#4a7a9b;--accent:#0ea5e9;--red:#f87171;--yellow:#f59e0b;--green:#10b981;color-scheme:dark}
+:root[data-theme="forest"]{--bg:#030b05;--bg-panel:#071a0a;--bg-elevated:#0c2412;--border:#183d20;--text:#dcfce7;--text-dim:#4a7a5a;--accent:#22c55e;--red:#f87171;--yellow:#f59e0b;--green:#10b981;--on-accent:#052e16;color-scheme:dark}
+:root[data-theme="sunset"]{--bg:#0d0804;--bg-panel:#1a1208;--bg-elevated:#231a0d;--border:#3d2e18;--text:#fff7ed;--text-dim:#7a5a3a;--accent:#f97316;--red:#ef4444;--yellow:#fbbf24;--green:#10b981;color-scheme:dark}
+:root[data-theme="rose"]{--bg:#0d0610;--bg-panel:#160b1e;--bg-elevated:#200f2c;--border:#3a1f4a;--text:#fdf4ff;--text-dim:#7a4a7a;--accent:#ec4899;--red:#f87171;--yellow:#f59e0b;--green:#10b981;color-scheme:dark}
+*{box-sizing:border-box}
+html{font-size:var(--app-size)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--app-font);line-height:1.5}
+button,input,select,textarea{font-family:inherit;font-size:inherit}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{font-size:1.2rem;margin:0;flex:1}header small{color:var(--mut);font-weight:400;margin-left:8px;font-size:1rem}
+main{max-width:1100px;margin:0 auto;padding:18px 16px 60px;display:grid;gap:16px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+h2{font-size:.95rem;margin:0 0 12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+button{border:1px solid var(--line);background:var(--card);color:var(--fg);padding:5px 11px;border-radius:7px;cursor:pointer}
+button:hover{border-color:var(--acc)}button.primary{background:var(--acc);border-color:var(--acc);color:var(--on-accent)}button.danger{color:var(--bad)}button:disabled{opacity:.5;cursor:default}
+input[type=text],select{border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:6px 9px;border-radius:7px;width:100%}
+form{display:grid;gap:10px}.row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}label{display:inline-flex;gap:6px;align-items:center}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--mut);font-weight:500;font-size:.85rem}.acts{display:flex;gap:6px;flex-wrap:wrap}td.id{white-space:nowrap}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:.85rem;border:1px solid var(--line)}
+.s-ready{color:var(--ok);border-color:var(--ok)}.s-failed,.s-dead{color:var(--bad);border-color:var(--bad)}.s-starting,.s-stopping,.s-creating{color:var(--warn);border-color:var(--warn)}
+.nw{white-space:nowrap;word-break:normal}.mut{color:var(--mut)}.path{font-family:ui-monospace,Menlo,monospace;font-size:.85rem;word-break:break-all}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:340px;margin:8px 0 0;font:.85rem/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
+.err{color:var(--bad)}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);width:min(860px,94vw);padding:16px}dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog.small{width:min(560px,94vw)}.field{display:grid;gap:6px;margin:12px 0}.field>span{color:var(--mut);font-size:.9rem}
+.themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px}
+.sw{display:grid;gap:6px;padding:8px;border-radius:9px;text-align:left}.sw.active{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+.sw i{display:flex;height:22px;border-radius:5px;overflow:hidden;border:1px solid rgba(128,128,128,.35)}.sw i b{flex:1}
+.preview{border:1px dashed var(--line);border-radius:8px;padding:10px;color:var(--mut)}
+.job{border-top:1px solid var(--line);padding:8px 0}.job:first-of-type{border-top:0}
+@media (max-width:640px){table,thead,tbody,tr,td,th{display:block}thead{display:none}tr{border-bottom:1px solid var(--line);padding:6px 0}td{border:0;padding:3px 0}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Glasshouse<small id="sub"></small></h1>
+  <button id="btnDoctor"></button>
+  <button id="btnSet"></button>
+</header>
+<main>
+  <section>
+    <h2 id="hNew"></h2>
+    <form id="runForm">
+      <div class="row">
+        <label><input type="radio" name="mode" value="shell" checked><span id="tShell"></span></label>
+        <label><input type="radio" name="mode" value="gui"><span id="tGui"></span></label>
+        <label><input type="checkbox" id="offline"><span id="tOffline"></span></label>
+        <label><input type="checkbox" id="keep"><span id="tKeep"></span></label>
+      </div>
+      <div><input type="text" id="project" autocomplete="off"><div class="mut" id="tProjHelp"></div></div>
+      <div class="row"><button class="primary" id="btnRun" type="submit"></button><span id="runMsg" class="err"></span></div>
+    </form>
+  </section>
+  <section>
+    <h2 id="hSess"></h2>
+    <div id="sessWrap"></div>
+  </section>
+  <section>
+    <div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 id="hVms" style="margin:0"></h2><button id="btnScan"></button></div>
+    <div class="mut" id="vmHelp" style="margin-bottom:8px"></div>
+    <div id="vmWrap"></div>
+    <div id="vmHint" class="mut" style="margin-top:8px"></div>
+  </section>
+  <section>
+    <h2 id="hJobs"></h2>
+    <div id="jobs" class="mut"></div>
+  </section>
+</main>
+<dialog id="setDlg" class="small">
+  <div class="row" style="justify-content:space-between"><strong id="setTitle"></strong></div>
+  <label class="field"><span id="lLang"></span><select id="selLang"><option value="auto"></option><option value="zh">中文</option><option value="en">English</option></select></label>
+  <div class="field"><span id="lTheme"></span><div id="themeGrid" class="themes"></div></div>
+  <label class="field"><span id="lFont"></span><select id="selFont"></select></label>
+  <label class="field"><span><span id="lSize"></span>: <span id="sizeVal">14</span>px</span><input id="rngSize" type="range" min="12" max="18" step="1" value="14"></label>
+  <div id="fontPreview" class="preview"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="btnReset"></button><button id="btnSetClose" class="primary"></button></div>
+</dialog>
+<dialog id="dlg">
+  <div class="row" style="justify-content:space-between"><strong id="dlgTitle"></strong><div class="row" id="dlgBtns"></div></div>
+  <pre id="dlgOut"></pre>
+</dialog>
+<script>
+"use strict";
+const I18N={
+en:{sub:"local control panel",doctor:"Environment check",hNew:"New session",tShell:"Shell (lightweight, no desktop)",tGui:"Desktop (GNOME window)",tOffline:"Offline",tKeep:"Keep data after stop",
+ project:"Project directory to copy into /workspace (optional)",projHelp:"A path on this machine. Secrets such as .env and *.pem are skipped.",run:"Start session",hSess:"Sessions",hJobs:"Recent operations",
+ none:"No sessions yet.",id:"ID",state:"State",profile:"Profile",age:"Age",egress:"Egress",proj:"Project",acts:"Actions",
+ terminal:"Shell",desktop:"Desktop",pull:"Pull",logs:"Logs",stop:"Stop",start:"Start",rm:"Remove",kept:"kept",close:"Close",apply:"Apply changes",
+ confirmStop:"Stop this session?",confirmRm:"Remove this session and its data?",verify:"Verify audit chain",console:"Console",audit:"Audit",
+ running:"running",done:"done",failed:"failed",nojobs:"Nothing yet.",pullTitle:"Pull: changes from the guest",nochange:"Nothing to apply.",opened:"Opened.",loading:"Loading…",
+ dangerous:"host network (no allowlist)",
+ hVms:"Virtual machines on this machine",scan:"Scan again",vmHelp:"Looks at the Glasshouse data directories on this machine and at running QEMU and Virtualization.framework processes.",
+ vm:"Name",source:"Source",cpumem:"CPU / memory",disk:"Disk used",where:"Location",novms:"No virtual machines found.",
+ k_session:"this data directory",k_other:"another data directory",k_external:"not started by Glasshouse",k_orphan:"broken record",
+ hintOther:"Sessions of another data directory can only be managed from a panel that uses it:",hintOrphan:"A broken record is a session directory without a readable session.json (a crash or a manual delete). Check it, then remove the directory by hand.",
+ dataDir:"Data directory",scanning:"Scanning…",
+ settings:"Settings",setTitle:"Settings",lLang:"Language",lTheme:"Color theme",lFont:"Font",lSize:"Font size",reset:"Reset to defaults",preview:"Glasshouse runs AI agents inside an isolated virtual machine.",langAuto:"Follow browser",
+ th_auto:"System",th_brand:"CC-Monitor",th_light:"Light",th_dark:"Dark",th_dracula:"Dracula",th_nord:"Nord",th_midnight:"Midnight",th_ocean:"Ocean",th_forest:"Forest",th_sunset:"Sunset",th_rose:"Rose",
+ f_system:"System default",f_mono:"Monospace",f_serif:"Serif",f_rounded:"Rounded",f_kaiti:"Kaiti",f_heiti:"Heiti (sans CJK)",f_songti:"Songti (serif CJK)"},
+zh:{sub:"本地控制面板",doctor:"环境检查",hNew:"新建会话",tShell:"Shell（轻量，无桌面）",tGui:"桌面（GNOME 窗口）",tOffline:"断网",tKeep:"停止后保留数据",
+ project:"要复制进 /workspace 的项目目录（可选）",projHelp:"本机上的路径。.env、*.pem 之类的敏感文件会被跳过。",run:"启动会话",hSess:"会话",hJobs:"最近的操作",
+ none:"还没有会话。",id:"ID",state:"状态",profile:"类型",age:"已运行",egress:"出站流量",proj:"项目",acts:"操作",
+ terminal:"终端",desktop:"桌面",pull:"取回",logs:"日志",stop:"停止",start:"启动",rm:"删除",kept:"保留",close:"关闭",apply:"应用改动",
+ confirmStop:"停止这个会话？",confirmRm:"删除这个会话和它的数据？",verify:"校验审计链",console:"控制台",audit:"审计",
+ running:"进行中",done:"完成",failed:"失败",nojobs:"暂无。",pullTitle:"取回：guest 里的改动",nochange:"没有可应用的改动。",opened:"已打开。",loading:"加载中…",
+ dangerous:"宿主机网络（白名单不生效）",
+ hVms:"本机虚拟机",scan:"重新扫描",vmHelp:"检查本机上的 Glasshouse 数据目录，以及正在运行的 QEMU 和 Virtualization.framework 进程。",
+ vm:"名称",source:"来源",cpumem:"CPU / 内存",disk:"磁盘占用",where:"位置",novms:"没有找到虚拟机。",
+ k_session:"本数据目录",k_other:"其他数据目录",k_external:"非 Glasshouse 启动",k_orphan:"记录损坏",
+ hintOther:"其他数据目录里的会话，要在使用该目录的面板里管理：",hintOrphan:"记录损坏指会话目录里没有可读的 session.json（崩溃或手动删除所致）。确认后请手动删除这个目录。",
+ dataDir:"数据目录",scanning:"扫描中…",
+ settings:"设置",setTitle:"设置",lLang:"界面语言",lTheme:"颜色主题",lFont:"界面字体",lSize:"界面字号",reset:"恢复默认",preview:"Glasshouse 在隔离的虚拟机里运行 AI Agent。",langAuto:"跟随浏览器",
+ th_auto:"跟随系统",th_brand:"CC-Monitor",th_light:"浅色",th_dark:"深色",th_dracula:"德古拉",th_nord:"北欧",th_midnight:"午夜",th_ocean:"海洋",th_forest:"森林",th_sunset:"日落",th_rose:"玫瑰",
+ f_system:"系统默认",f_mono:"等宽字体",f_serif:"衬线字体",f_rounded:"圆体",f_kaiti:"楷体",f_heiti:"黑体",f_songti:"宋体"}};
+const FONTS={
+ system:'"Inter", -apple-system, "Segoe UI", "Helvetica Neue", Arial, "LXGW WenKai", "霞鹜文楷", "楷体", "STKaiti", "Kaiti SC", KaiTi, "AR PL UKai CN", sans-serif',
+ mono:'Menlo, Consolas, "SF Mono", "JetBrains Mono", "LXGW WenKai", "霞鹜文楷", monospace',
+ serif:'Georgia, "Songti SC", "STSong", SimSun, "LXGW WenKai", serif',
+ rounded:'"SF Pro Rounded", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+ kaiti:'"楷体", "STKaiti", "Kaiti SC", KaiTi, "华文楷体", "文鼎ＰＬ简中楷", "AR PL KaitiM GB", "AR PL UKai CN", "霞鹜文楷", "LXGW WenKai", -apple-system, sans-serif',
+ heiti:'"Microsoft YaHei", "微软雅黑", "PingFang SC", "苹方", "Noto Sans CJK SC", "Noto Sans SC", "WenQuanYi Micro Hei", "文泉驿微米黑", -apple-system, "Segoe UI", sans-serif',
+ songti:'"SimSun", "宋体", "Songti SC", "宋体-简", "STSong", "Noto Serif CJK SC", "AR PL UMing CN", "文鼎ＰＬ细上海宋", Georgia, serif'};
+const THEMES={auto:["#f5f6f8","#ffffff","#2f6fed"],brand:["#f4f0f1","#f9f5e6","#4757e8"],light:["#f5f6f8","#ffffff","#2f6fed"],dark:["#0f1115","#151822","#4f8cff"],dracula:["#191a21","#21222c","#bd93f9"],nord:["#2e3440","#3b4252","#88c0d0"],midnight:["#07080f","#0d1117","#6366f1"],ocean:["#060d14","#091825","#0ea5e9"],forest:["#030b05","#071a0a","#22c55e"],sunset:["#0d0804","#1a1208","#f97316"],rose:["#0d0610","#160b1e","#ec4899"]};
+const DEF={lang:"auto",theme:"auto",font:"system",size:14};
+let cfg=Object.assign({},DEF);
+try{const j=JSON.parse(localStorage.getItem("gh_ui_settings")||"{}");for(const k of Object.keys(DEF))if(j[k]!==undefined)cfg[k]=j[k]}catch(e){}
+if(!FONTS[cfg.font])cfg.font=DEF.font;if(!THEMES[cfg.theme])cfg.theme=DEF.theme;if(!["auto","zh","en"].includes(cfg.lang))cfg.lang=DEF.lang;cfg.size=Math.min(18,Math.max(12,parseInt(cfg.size,10)||14));
+const effLang=()=>cfg.lang==="auto"?((navigator.language||"en").toLowerCase().startsWith("zh")?"zh":"en"):cfg.lang;
+let lang=effLang();
+function saveCfg(){try{localStorage.setItem("gh_ui_settings",JSON.stringify(cfg))}catch(e){}}
+function applyLook(){const r=document.documentElement;if(cfg.theme==="auto")r.removeAttribute("data-theme");else r.setAttribute("data-theme",cfg.theme);r.style.setProperty("--app-font",FONTS[cfg.font]);r.style.setProperty("--app-size",cfg.size+"px")}
+const t=k=>I18N[lang][k]||k, $=id=>document.getElementById(id);
+function el(tag,attrs,...kids){const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs||{})){if(k==="class")e.className=v;else if(k.startsWith("on"))e[k]=v;else e.setAttribute(k,v)}for(const c of kids)e.append(c);return e}
+async function api(path,opt){const o=Object.assign({headers:{}},opt||{});if(o.method&&o.method!=="GET"){o.headers["X-Glasshouse-UI"]="1";if(o.body&&typeof o.body!=="string"){o.body=JSON.stringify(o.body);o.headers["Content-Type"]="application/json"}}
+ const r=await fetch(path,o);let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw new Error(j.error||r.statusText);return j}
+function applyLang(){lang=effLang();document.documentElement.lang=lang;$("sub").textContent=t("sub");$("btnDoctor").textContent=t("doctor");$("btnSet").textContent="⚙ "+t("settings");
+ $("hNew").textContent=t("hNew");$("tShell").textContent=t("tShell");$("tGui").textContent=t("tGui");$("tOffline").textContent=t("tOffline");$("tKeep").textContent=t("tKeep");
+ $("project").placeholder=t("project");$("tProjHelp").textContent=t("projHelp");$("btnRun").textContent=t("run");$("hSess").textContent=t("hSess");$("hVms").textContent=t("hVms");$("btnScan").textContent=t("scan");$("vmHelp").textContent=t("vmHelp");$("hJobs").textContent=t("hJobs");renderSessions();renderJobs();renderVMs()}
+let sessions=[],jobs=[];
+function actBtn(label,fn,cls){return el("button",{class:cls||"",onclick:fn},label)}
+function renderSessions(){const w=$("sessWrap");w.textContent="";if(!sessions.length){w.append(el("div",{class:"mut"},t("none")));return}
+ const tb=el("table"),th=el("thead",{},el("tr",{},...["id","state","profile","age","egress","proj","acts"].map(k=>el("th",{},t(k)))));tb.append(th);const body=el("tbody");
+ for(const s of sessions){const a=el("div",{class:"acts"});
+  if(s.state==="ready"){a.append(actBtn(t("terminal"),()=>act(s.id,"terminal")));if(s.gui)a.append(actBtn(t("desktop"),()=>act(s.id,"gui")));a.append(actBtn(t("pull"),()=>pull(s.id)))}
+  if((s.state==="stopped"||s.state==="dead"||s.state==="failed")&&s.persistent)a.append(actBtn(t("start"),()=>act(s.id,"start"),"primary"));
+  a.append(actBtn(t("logs"),()=>logs(s.id)));
+  if(s.state==="ready"||s.state==="starting")a.append(actBtn(t("stop"),()=>{if(confirm(t("confirmStop")))act(s.id,"stop")},"danger"));
+  if(s.state==="stopped"||s.state==="failed"||s.state==="dead")a.append(actBtn(t("rm"),()=>{if(confirm(t("confirmRm")))act(s.id,"rm")},"danger"));
+  const st=el("td",{},el("span",{class:"tag s-"+s.state},s.state));if(s.persistent)st.append(" ",el("span",{class:"tag"},t("kept")));if(s.host_net)st.append(" ",el("span",{class:"tag s-starting",title:t("dangerous")},"host"));
+  body.append(el("tr",{},el("td",{class:"path id"},s.id),st,el("td",{},s.profile+" / "+s.backend),el("td",{},s.age),el("td",{},s.egress),el("td",{class:"path"},s.project||"—"),el("td",{},a)))}
+ tb.append(body);w.append(tb)}
+let vmData=null;
+function fmtBytes(n){if(!n)return"—";const u=["B","KB","MB","GB","TB"];let i=0;while(n>=1024&&i<4){n/=1024;i++}return(n>=10||i===0?Math.round(n):n.toFixed(1))+" "+u[i]}
+function renderVMs(){const w=$("vmWrap"),hint=$("vmHint");w.textContent="";hint.textContent="";if(!vmData){w.append(el("div",{class:"mut"},t("scanning")));return}
+ const vms=vmData.vms;if(!vms.length){w.append(el("div",{class:"mut"},t("novms")));return}
+ const tb=el("table"),hd=el("thead",{},el("tr",{},...["vm","source","state","cpumem","disk","where"].map(k=>el("th",{},t(k)))));tb.append(hd);const body=el("tbody");let other=false,orphan=false;
+ for(const v of vms){if(v.kind==="other")other=true;if(v.kind==="orphan")orphan=true;
+  const st=v.state==="running"?"ready":v.state;const stc=el("td",{},el("span",{class:"tag s-"+st},v.state));if(v.pid)stc.append(" ",el("span",{class:"mut path nw"},"pid "+v.pid));if(v.persistent)stc.append(" ",el("span",{class:"tag"},t("kept")));
+  const loc=v.kind==="external"?(v.cmd||""):v.kind==="session"?(v.project||v.path):v.home;
+  const cm=(v.cpus?v.cpus+" vCPU":"—")+" / "+(v.memory_mib?(v.memory_mib>=1024?(v.memory_mib/1024).toFixed(v.memory_mib%1024?1:0)+" GB":v.memory_mib+" MB"):"—");
+  body.append(el("tr",{},el("td",{class:"path id"},v.name||v.id),el("td",{},el("span",{class:"tag"+(v.kind==="external"?" s-starting":v.kind==="orphan"?" s-failed":"")},t("k_"+v.kind)),v.backend?el("span",{class:"mut"}," "+v.backend+(v.profile?" / "+v.profile:"")):""),stc,el("td",{},cm),el("td",{},fmtBytes(v.disk_bytes)),el("td",{class:"path",title:v.path||""},loc)))}
+ tb.append(body);w.append(tb);
+ if(other){const homes=[...new Set(vms.filter(v=>v.kind==="other").map(v=>v.home))];hint.append(t("hintOther"));for(const h of homes)hint.append(el("div",{class:"path"},"GLASSHOUSE_HOME="+h+" glasshouse ui"))}
+ if(orphan)hint.append(el("div",{},t("hintOrphan")));
+ hint.append(el("div",{class:"path"},t("dataDir")+": "+vmData.home))}
+async function scan(){try{vmData=await api("/api/vms");renderVMs()}catch(e){}}
+$("btnScan").onclick=()=>{vmData=null;renderVMs();scan()};
+function renderJobs(){const w=$("jobs");w.textContent="";if(!jobs.length){w.textContent=t("nojobs");return}
+ for(const j of jobs.slice(0,6)){const state=!j.done?t("running"):j.ok?t("done"):t("failed");const pre=el("pre",{},j.output||"");pre.style.display=j.output?"block":"none";
+  w.append(el("div",{class:"job"},el("strong",{},j.title)," ",el("span",{class:"tag "+(j.done?(j.ok?"s-ready":"s-failed"):"s-starting")},state),pre));pre.scrollTop=pre.scrollHeight}}
+async function refresh(){try{sessions=await api("/api/sessions");jobs=await api("/api/jobs");renderSessions();renderJobs()}catch(e){}}
+async function act(id,a){try{const r=await api("/api/session/"+id+"/"+a,{method:"POST"});if(r.job)await refresh();else if(r.ok)toast(t("opened"))}catch(e){alert(e.message)}}
+function toast(m){$("runMsg").className="mut";$("runMsg").textContent=m;setTimeout(()=>{$("runMsg").textContent=""},2500)}
+function openDlg(title,btns){$("dlgTitle").textContent=title;$("dlgOut").textContent=t("loading");const b=$("dlgBtns");b.textContent="";for(const x of btns)b.append(x);b.append(el("button",{onclick:()=>$("dlg").close()},t("close")));if(!$("dlg").open)$("dlg").showModal()}
+async function logs(id,kind){openDlg(t("logs")+" "+id,[el("button",{onclick:()=>logs(id,"")},t("audit")),el("button",{onclick:()=>logs(id,"verify")},t("verify")),el("button",{onclick:()=>logs(id,"console")},t("console"))]);
+ try{const r=await api("/api/session/"+id+"/logs?kind="+(kind||""));$("dlgOut").textContent=r.output||"(empty)"}catch(e){$("dlgOut").textContent=e.message}}
+async function pull(id){const apply=el("button",{class:"primary",disabled:"true",onclick:async()=>{apply.disabled=true;try{const r=await api("/api/session/"+id+"/pull",{method:"POST"});$("dlgOut").textContent=r.output}catch(e){$("dlgOut").textContent=e.message}}},t("apply"));
+ openDlg(t("pullTitle")+" "+id,[apply]);try{const r=await api("/api/session/"+id+"/pull");$("dlgOut").textContent=r.output||t("nochange");apply.disabled=!/\b(added|modified|deleted)\b/.test(r.output||"")}catch(e){$("dlgOut").textContent=e.message}}
+$("runForm").addEventListener("submit",async e=>{e.preventDefault();$("runMsg").className="err";$("runMsg").textContent="";const mode=document.querySelector("input[name=mode]:checked").value;
+ try{await api("/api/run",{method:"POST",body:{mode,project:$("project").value,offline:$("offline").checked,keep:$("keep").checked}});await refresh()}catch(x){$("runMsg").textContent=x.message}});
+$("btnDoctor").onclick=async()=>{openDlg(t("doctor"),[]);try{const r=await api("/api/doctor");$("dlgOut").textContent=r.output}catch(e){$("dlgOut").textContent=e.message}};
+function renderSettings(){$("setTitle").textContent=t("setTitle");$("lLang").textContent=t("lLang");$("lTheme").textContent=t("lTheme");$("lFont").textContent=t("lFont");$("lSize").textContent=t("lSize");
+ $("btnReset").textContent=t("reset");$("btnSetClose").textContent=t("close");$("fontPreview").textContent=t("preview");
+ const sl=$("selLang");sl.options[0].textContent=t("langAuto");sl.value=cfg.lang;
+ const sf=$("selFont");sf.textContent="";for(const k of Object.keys(FONTS)){const o=el("option",{value:k},t("f_"+k));sf.append(o)}sf.value=cfg.font;
+ $("rngSize").value=cfg.size;$("sizeVal").textContent=cfg.size;
+ const g=$("themeGrid");g.textContent="";for(const[k,c]of Object.entries(THEMES)){const sw=el("button",{type:"button",class:"sw"+(k===cfg.theme?" active":""),onclick:()=>{cfg.theme=k;saveCfg();applyLook();renderSettings()}},el("i",{},...c.map(x=>{const b=el("b");b.style.background=x;return b})),t("th_"+k));g.append(sw)}}
+$("btnSet").onclick=()=>{renderSettings();$("setDlg").showModal()};
+$("btnSetClose").onclick=()=>$("setDlg").close();
+$("selLang").onchange=e=>{cfg.lang=e.target.value;saveCfg();applyLang();renderSettings()};
+$("selFont").onchange=e=>{cfg.font=e.target.value;saveCfg();applyLook()};
+$("rngSize").oninput=e=>{cfg.size=parseInt(e.target.value,10);$("sizeVal").textContent=cfg.size;saveCfg();applyLook()};
+$("btnReset").onclick=()=>{cfg=Object.assign({},DEF);saveCfg();applyLook();applyLang();renderSettings()};
+applyLook();applyLang();refresh();scan();setInterval(refresh,3000);setInterval(scan,10000);
+</script>
+</body>
+</html>

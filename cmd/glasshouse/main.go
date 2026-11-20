@@ -31,6 +31,7 @@ Usage:
   glasshouse stop [session]
   glasshouse rm <session>
   glasshouse policy check [file]
+  glasshouse ui [--port N] [--no-open]            local control panel in the browser (127.0.0.1 only)
   glasshouse doctor
 
 run flags:
@@ -77,6 +78,8 @@ func main() {
 		err = cmdRM(args)
 	case "policy":
 		err = cmdPolicy(args)
+	case "ui":
+		err = cmdUI(args)
 	case "doctor":
 		err = cmdDoctor(args)
 	case "help", "-h", "--help":

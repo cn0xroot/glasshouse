@@ -524,6 +524,7 @@ Mac 第 7 步：策略和第一个会话。按 Linux 的[第 9 步](#第-9-步�
 ./bin/glasshouse pull                          # 审阅 diff 并取回改动
 ./bin/glasshouse logs --verify                 # 校验审计哈希链
 ./bin/glasshouse stop                          # 停止会话
+./bin/glasshouse ui                            # 浏览器里的本地控制面板
 ```
 
 典型流程：`run` 启动 → 在 guest 里让 Agent 干活 → `pull` 审阅并取回 → `logs --verify` 核对审计 → `stop`。
@@ -598,6 +599,39 @@ Mac 第 7 步：策略和第一个会话。按 Linux 的[第 9 步](#第-9-步�
 - `glasshouse stop [session]` 关闭虚拟机并**删除它的磁盘：只存在于 guest 里的东西都会丢失。** 请先 `pull`。审计日志和会话记录会保留。
 - `glasshouse run --keep` 让停止后保留磁盘；`glasshouse start <会话>` 可再次启动它。
 - `glasshouse rm <session>` 删除已停止、失败或已死亡会话的目录，包括审计日志。
+
+### `glasshouse ui`：控制面板
+
+`glasshouse ui [--port N] [--no-open]` 在浏览器里打开一个本地控制面板，给更习惯点按钮的人用。它是 `glasshouse` 程序自己提供的一个页面，不用额外安装，也没有引入原生 GUI 库，所以 Linux 和 macOS 上用法一致。
+
+```bash
+./bin/glasshouse ui            # 打印 http://127.0.0.1:<端口>/?t=<令牌> 并自动打开
+./bin/glasshouse ui --no-open  # 只打印地址（比如在远程桌面里用）
+```
+
+页面的功能：
+
+| 区域 | 能做什么 |
+| --- | --- |
+| 新建会话 | Shell 或桌面、断网、停止后保留数据、可选的项目目录（等同于 `run --shell/--gui [--offline] [--keep] [目录]`） |
+| 会话 | 实时列表（每 3 秒刷新），显示状态、类型、已运行时间、出站流量和项目。每个会话有：**终端**（打开终端窗口运行 `glasshouse ssh`）、**桌面**（`glasshouse gui`）、**取回**、**日志**、**停止**、**启动**（保留数据的会话）、**删除** |
+| 取回 | 和 `glasshouse pull` 一样，先显示改动清单，点**应用改动**之前不会写任何文件 |
+| 日志 | 审计日志、**校验审计链**（`logs --verify`）和控制台日志 |
+| 环境检查 | `glasshouse doctor` 的输出 |
+| 本机虚拟机 | glasshouse 在本机能找到的全部虚拟机，显示来源、状态、CPU 和内存、磁盘占用和位置，每 10 秒刷新一次（也可以点**重新扫描**）。它会读取面板管理的数据目录、能看到的其他 glasshouse 数据目录（默认目录、可读的其他用户的默认目录，以及正在运行的虚拟机所指向的目录），以及正在运行的 QEMU 和 Virtualization.framework 进程。所以也能列出**不是 glasshouse 启动的虚拟机**和**损坏的记录**（会话目录里没有可读的 `session.json`）。其他数据目录里的会话会附上管理它的命令（`GLASSHOUSE_HOME=<目录> glasshouse ui`） |
+| 设置（⚙） | **界面语言**（跟随浏览器、中文或 English）、**颜色主题**（跟随系统、CC-Monitor、浅色、深色、德古拉、北欧、午夜、海洋、森林、日落、玫瑰，配色直接取自 CC-Monitor，两个界面风格一致）、**界面字体**（系统默认、等宽、衬线、圆体、楷体、黑体、宋体）和**界面字号**（12 到 18 px）。保存在浏览器的本地存储里，有恢复默认按钮 |
+| 最近的操作 | 页面启动的命令（启动、停止、删除）的输出 |
+
+页面默认跟随浏览器的语言和浅色或深色主题，上面的设置可以覆盖这两项。关闭页面或停掉 `glasshouse ui` 不会停止任何会话。
+
+安全措施：
+
+- 只监听 **127.0.0.1**，并且需要随机令牌：启动时打印的地址里带着令牌，页面之后把它放在 `HttpOnly`、`SameSite=Strict` 的 cookie 里。没有这个地址的人得到 `401`。
+- `Host` 不是 `127.0.0.1:<端口>` 或 `localhost:<端口>` 的请求会被拒绝（防 DNS 重绑定），所有写操作还要带自定义请求头并且 `Origin` 匹配，其他网站发不出这样的请求。
+- 页面只能运行 `glasshouse` 自己的子命令（`run`、`start`、`stop`、`rm`、`gui`、`pull`、`logs`、`doctor`，以及通过终端运行的 `ssh`），参数都经过校验：会话 ID 必须形如 `s-xxxxxx`，模式只能是 `shell` 或 `gui`，项目路径不能以 `-` 开头。没有办法输入任意命令。策略还是平常那一份（`~/.config/glasshouse/policy.yaml`），策略禁止的事情照样禁止。
+- 能在你这台机器上打开这个地址的人，就能以你的身份启动和停止会话。不要把这个端口转发给别的机器。
+
+在 Linux x86 真机上验证过：用项目目录启动 shell 会话、列表显示、`pull` 预览（不写文件）再应用、审计校验、停止和删除、环境检查，以及上面列出的每一种拒绝情况（没有 cookie、令牌错误、Host 不对、缺少请求头、Origin 不对、会话 ID 不对、未知操作），页面本身在无头 Chrome 里按桌面宽度和手机宽度都渲染过。6 个单元测试覆盖了访问校验、参数构造和后台任务。**没有验证：** **终端**按钮（打开终端模拟器：Linux 上依次尝试 `x-terminal-emulator`、`gnome-terminal`、`konsole`、`xfce4-terminal`、`xterm`，macOS 上用 Terminal.app）、页面里的**桌面**按钮、页面里启动保留会话的**启动**按钮，以及 macOS 上的全部功能。
 
 ### 典型流程
 

@@ -4,6 +4,10 @@ English | [简体中文](./CHANGELOG.zh-CN.md)
 
 What changed per version, as a user would notice it. Every item says how far it was checked: **verified** means it was run on a real machine, **not verified** means only the code was written or only unit tests exist. The step-by-step code change log is the local note `docs/CHANGELOG.md` (listed in `.gitignore`, not in the repository).
 
+## Unreleased
+
+- **Added: `glasshouse ui`, a local control panel in the browser.** New session, session list with Shell / Desktop / Pull / Logs / Stop / Start / Remove, pull review before writing, audit verification and the environment check. Listens on 127.0.0.1 only with a random token, checks Host and Origin, and runs only glasshouse's own subcommands with validated arguments. A **Local virtual machines** list finds every VM on the machine: sessions of this and of other glasshouse data directories, running QEMU / Virtualization.framework processes that glasshouse did not start, and broken session records. A settings dialog sets the language (follow the browser, 中文, English), a color theme (System plus CC-Monitor's own palettes: CC-Monitor, Light, Dark, Dracula, Nord, Midnight, Ocean, Forest, Sunset, Rose), the font (7 stacks) and the font size (12 to 18 px), saved in the browser. No new dependency (the page is embedded in the binary). **Verified** on Linux x86: the whole lifecycle through the API, every refusal, the page rendered in headless Chrome, settings applied, kept after a reload and reset in a scripted browser with no script errors, 10 unit tests; the machine list checked against the real machine (a session of this and of another data directory, an unrelated QEMU, an orphan directory). **Not verified:** the Shell button (opening a terminal emulator), the Desktop and Start buttons from the page, macOS.
+
 ## V0.2 (2026-11-17, tag `V0.2`)
 
 On top of `V0.1`; main commits `3f8429f`, `5f3716d` and `fe2e99f`. Main points: support for Macs with Apple silicon, and a fix for a race that V0.1 already had.
